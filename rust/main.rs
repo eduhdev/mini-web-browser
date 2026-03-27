@@ -25,6 +25,7 @@ fn show(body: &str) {
 fn load(url: &Url) {
     let body = url.request();
     show(&body);
+    println!();
 }
 
 struct Url {
@@ -35,8 +36,23 @@ struct Url {
 
 impl Url {
     fn new(url: &str) -> Self {
-        let (scheme, rest) = url.split_once("://").expect("URL must contain ://");
-        assert!(matches!(scheme, "http" | "https" | "file"));
+        let (scheme, rest) = url.split_once(':').expect("URL must contain :");
+        assert!(matches!(scheme, "http" | "https" | "file" | "data"));
+
+        if scheme == "data" {
+            let (_media_type, data) = rest.split_once(',').expect("data URL must contain ','");
+            return Self {
+                scheme: scheme.to_string(),
+                host: String::new(),
+                path: data.to_string(),
+            };
+        }
+
+        let rest = if let Some(stripped) = rest.strip_prefix("//") {
+            stripped
+        } else {
+            rest
+        };
 
         if scheme == "file" {
             let path = if rest.starts_with('/') {
@@ -70,6 +86,10 @@ impl Url {
     }
 
     fn request(&self) -> String {
+        if self.scheme == "data" {
+            return self.path.clone();
+        }
+
         if self.scheme == "file" {
             return fs::read_to_string(&self.path).expect("failed to read local file");
         }

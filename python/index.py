@@ -19,12 +19,22 @@ def show(body):
 def load(url):
     body = url.request()
     show(body)
+    print()
 
 
 class URL:
     def __init__(self, url):
-        self.scheme, url = url.split("://", 1)
-        assert self.scheme in ["http", "https", "file"]
+        self.scheme, url = url.split(":", 1)
+        assert self.scheme in ["http", "https", "file", "data"]
+
+        if self.scheme == "data":
+            self.host = ""
+            self.path = ""
+            self.media_type, self.data = url.split(",", 1)
+            return
+
+        if url.startswith("//"):
+            url = url[2:]
 
         if self.scheme == "file":
             if url.startswith("/"):
@@ -41,6 +51,9 @@ class URL:
         self.path = "/" + url
 
     def request(self):
+        if self.scheme == "data":
+            return self.data
+
         if self.scheme == "file":
             with open(self.path, "r", encoding="utf8") as f:
                 return f.read()
