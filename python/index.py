@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 DEFAULT_FILE = Path(__file__).with_name("test.html")
+MAX_REDIRECTS = 10
 
 def show(body):
     in_tag = False
@@ -83,9 +84,9 @@ class URL:
         self.host, url = url.split("/", 1)
         self.path = "/" + url
 
-    def request(self):
+    def request(self, redirects=0):
         if self.view_source:
-            return self.inner.request()
+            return self.inner.request(redirects)
 
         if self.scheme == "data":
             return self.data
@@ -137,6 +138,7 @@ class URL:
 
         statusline = response.readline().decode("utf8")
         version, status, explanation = statusline.split(" ", 2)
+        status = int(status)
 
         response_headers = {}
         while True:
@@ -148,12 +150,31 @@ class URL:
 
         assert "transfer-encoding" not in response_headers
         assert "content-encoding" not in response_headers
-        assert "content-length" in response_headers
 
-        content_length = int(response_headers["content-length"])
+        content_length = int(response_headers.get("content-length", 0))
         content = response.read(content_length).decode("utf8")
 
+        if 300 <= status < 400:
+            assert "location" in response_headers
+            assert redirects < MAX_REDIRECTS
+            return URL(self.resolve(response_headers["location"])).request(redirects + 1)
+
         return content
+
+    def resolve(self, location):
+        if location.startswith("//"):
+            return "{}:{}".format(self.scheme, location)
+        if location.startswith("/"):
+            return "{}://{}{}".format(self.scheme, self.authority(), location)
+        if ":" in location.split("/", 1)[0]:
+            return location
+        raise AssertionError("unsupported redirect location")
+
+    def authority(self):
+        default_port = 80 if self.scheme == "http" else 443
+        if self.port == default_port:
+            return self.host
+        return "{}:{}".format(self.host, self.port)
 
 
 if __name__ == "__main__":

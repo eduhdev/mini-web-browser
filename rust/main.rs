@@ -8,6 +8,7 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 
 const DEFAULT_FILE: &str = "test.html";
+const MAX_REDIRECTS: usize = 10;
 
 thread_local! {
     static CONNECTIONS: RefCell<HashMap<String, Connection>> = RefCell::new(HashMap::new());
@@ -138,12 +139,16 @@ impl Url {
     }
 
     fn request(&self) -> String {
+        self.request_with_redirects(0)
+    }
+
+    fn request_with_redirects(&self, redirects: usize) -> String {
         if self.view_source {
             return self
                 .inner
                 .as_ref()
                 .expect("view-source URL missing inner URL")
-                .request();
+                .request_with_redirects(redirects);
         }
 
         if self.scheme == "data" {
@@ -199,7 +204,11 @@ impl Url {
 
             let mut parts = statusline.trim_end().splitn(3, ' ');
             let _version = parts.next().expect("missing HTTP version");
-            let _status = parts.next().expect("missing status code");
+            let status = parts
+                .next()
+                .expect("missing status code")
+                .parse::<u16>()
+                .expect("invalid status code");
             let _explanation = parts.next().expect("missing status explanation");
 
             let mut response_headers = HashMap::new();
@@ -225,9 +234,8 @@ impl Url {
 
             let content_length = response_headers
                 .get("content-length")
-                .expect("missing content-length")
-                .parse::<usize>()
-                .expect("invalid content-length");
+                .map(|value| value.parse::<usize>().expect("invalid content-length"))
+                .unwrap_or(0);
 
             let mut content = vec![0; content_length];
             connection
@@ -235,8 +243,54 @@ impl Url {
                 .read_exact(&mut content)
                 .expect("failed to read response body");
 
-            String::from_utf8(content).expect("response body was not utf-8")
+            if (300..400).contains(&status) {
+                let location = response_headers
+                    .get("location")
+                    .expect("redirect response missing location");
+                assert!(redirects < MAX_REDIRECTS, "too many redirects");
+                Url::new(&self.resolve(location)).request_with_redirects(redirects + 1)
+            } else {
+                String::from_utf8(content).expect("response body was not utf-8")
+            }
         })
+    }
+
+    fn resolve(&self, location: &str) -> String {
+        if location.starts_with("//") {
+            format!("{}:{}", self.scheme, location)
+        } else if location.starts_with('/') {
+            format!("{}://{}{}", self.scheme, self.authority(), location)
+        } else if location.split('/').next().unwrap_or("").contains(':') {
+            location.to_string()
+        } else {
+            panic!("unsupported redirect location");
+        }
+    }
+
+    fn authority(&self) -> String {
+        let default_port = if self.scheme == "http" { 80 } else { 443 };
+        if self.port() == default_port {
+            self.host_without_port().to_string()
+        } else {
+            format!("{}:{}", self.host_without_port(), self.port())
+        }
+    }
+
+    fn host_without_port(&self) -> &str {
+        self.host
+            .split_once(':')
+            .map(|(host, _)| host)
+            .unwrap_or(&self.host)
+    }
+
+    fn port(&self) -> u16 {
+        if let Some((_, port)) = self.host.split_once(':') {
+            port.parse::<u16>().expect("invalid port")
+        } else if self.scheme == "http" {
+            80
+        } else {
+            443
+        }
     }
 }
 
