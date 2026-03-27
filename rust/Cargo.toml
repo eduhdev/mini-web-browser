@@ -3,10 +3,7 @@ name = "browser"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "browser"
-path = "main.rs"
-
 [dependencies]
+eframe = "0.33"
 flate2 = "1.1"
 native-tls = "0.2"

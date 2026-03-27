@@ -2,14 +2,14 @@ use flate2::read::GzDecoder;
 use native_tls::TlsConnector;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
+use std::thread_local;
 use std::time::{Duration, Instant};
 
-const DEFAULT_FILE: &str = "test.html";
+pub const DEFAULT_FILE: &str = "test.html";
 const MAX_REDIRECTS: usize = 10;
 
 thread_local! {
@@ -17,25 +17,30 @@ thread_local! {
     static CACHE: RefCell<HashMap<String, CacheEntry>> = RefCell::new(HashMap::new());
 }
 
-fn show(body: &str) {
+pub fn fetch(url: &str) -> String {
+    Url::new(url).request()
+}
+
+pub fn lex(body: &str) -> String {
     let mut in_tag = false;
     let mut entity = String::new();
     let mut in_entity = false;
+    let mut text = String::new();
 
     for c in body.chars() {
         if in_entity {
             entity.push(c);
 
             if entity == "&lt;" {
-                print!("<");
+                text.push('<');
                 entity.clear();
                 in_entity = false;
             } else if entity == "&gt;" {
-                print!(">");
+                text.push('>');
                 entity.clear();
                 in_entity = false;
             } else if c == ';' {
-                print!("{entity}");
+                text.push_str(&entity);
                 entity.clear();
                 in_entity = false;
             }
@@ -47,23 +52,15 @@ fn show(body: &str) {
             entity.push(c);
             in_entity = true;
         } else if !in_tag {
-            print!("{c}");
+            text.push(c);
         }
     }
+
+    text
 }
 
-fn load(url: &Url) {
-    let body = url.request();
-    if url.view_source {
-        print!("{body}");
-    } else {
-        show(&body);
-    }
-    println!();
-}
-
-struct Url {
-    view_source: bool,
+pub struct Url {
+    pub view_source: bool,
     inner: Option<Box<Url>>,
     scheme: String,
     host: String,
@@ -82,7 +79,7 @@ struct CacheEntry {
 }
 
 impl Url {
-    fn new(url: &str) -> Self {
+    pub fn new(url: &str) -> Self {
         let (scheme, rest) = url.split_once(':').expect("URL must contain :");
         assert!(matches!(scheme, "http" | "https" | "file" | "data" | "view-source"));
 
@@ -148,7 +145,7 @@ impl Url {
         }
     }
 
-    fn request(&self) -> String {
+    pub fn request(&self) -> String {
         self.request_with_redirects(0)
     }
 
@@ -347,7 +344,11 @@ impl Url {
             let key = self.cache_key();
 
             match cache.get(&key) {
-                Some(entry) if entry.expires_at.is_none_or(|expires_at| Instant::now() <= expires_at) => {
+                Some(entry)
+                    if entry
+                        .expires_at
+                        .is_none_or(|expires_at| Instant::now() <= expires_at) =>
+                {
                     Some((entry.status, entry.headers.clone(), entry.body.clone()))
                 }
                 Some(_) => {
@@ -410,15 +411,10 @@ trait ReadWrite: Read + Write {}
 
 impl<T: Read + Write> ReadWrite for T {}
 
-fn main() {
-    let url = env::args().nth(1).unwrap_or_else(default_file_url);
-    load(&Url::new(&url));
-}
-
-fn default_file_url() -> String {
+pub fn default_file_url() -> String {
     let base = option_env!("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| env::current_dir().expect("failed to get current directory"));
+        .unwrap_or_else(|| std::env::current_dir().expect("failed to get current directory"));
     let path = base.join(DEFAULT_FILE);
     format!("file://{}", path.display())
 }

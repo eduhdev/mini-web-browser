@@ -17,11 +17,13 @@ The book primarily builds the browser in Python, and this repository follows tha
 - `rust/`
   Rust implementation
 
+Inside each implementation, the code is now split into separate graphics and network layers so UI work can continue independently from fetching and parsing.
+
 ## Current Status
 
 The project currently contains a small text-based browser prototype in both languages.
 
-Implemented so far:
+Implemented so far in the network layer:
 
 - `http`, `https`, `file`, `data`, and `view-source` URL support
 - HTTP/1.1 requests with reusable request headers
@@ -34,11 +36,13 @@ Implemented so far:
 - simple HTML text extraction
 - support for `&lt;` and `&gt;` entities
 
-This is still intentionally minimal. It is not yet a graphical browser and does not implement full HTML parsing, layout, CSS, or JavaScript.
+The project also now includes a minimal standalone graphics shell in both Python and Rust. The GUI is intentionally not connected to the network layer yet.
+
+This is still intentionally minimal. It does not yet implement full HTML parsing, layout, CSS, or JavaScript.
 
 ## Run
 
-Python:
+Python CLI:
 
 ```bash
 python3 python/index.py
@@ -47,14 +51,17 @@ python3 python/index.py 'data:text/html,<h1>Hello</h1>'
 python3 python/index.py 'view-source:https://example.org'
 ```
 
-Rust:
+Python GUI:
+
+```bash
+python3 python/gui.py
+```
+
+Rust GUI:
 
 ```bash
 cd rust
 cargo run
-cargo run -- https://example.org
-cargo run -- 'data:text/html,<h1>Hello</h1>'
-cargo run -- 'view-source:https://example.org'
 ```
 
 ## Test Files
