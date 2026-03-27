@@ -65,8 +65,16 @@ impl Url {
 
         let tcp_stream = TcpStream::connect((host.as_str(), port)).expect("failed to connect");
 
-        let mut request = format!("GET {} HTTP/1.0\r\n", self.path);
-        request.push_str(&format!("Host: {}\r\n", host));
+        let headers = vec![
+            ("Host", host.as_str()),
+            ("Connection", "close"),
+            ("User-Agent", "eduhdev-browser/0.1"),
+        ];
+
+        let mut request = format!("GET {} HTTP/1.1\r\n", self.path);
+        for (header, value) in headers {
+            request.push_str(&format!("{header}: {value}\r\n"));
+        }
         request.push_str("\r\n");
 
         let mut response = if self.scheme == "https" {

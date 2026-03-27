@@ -48,8 +48,15 @@ class URL:
         self.host = host
         s.connect((self.host, self.port))
 
-        request = "GET {} HTTP/1.0\r\n".format(self.path)
-        request += "Host: {}\r\n".format(self.host)
+        headers = {
+            "Host": self.host,
+            "Connection": "close",
+            "User-Agent": "eduhdev-browser/0.1",
+        }
+
+        request = "GET {} HTTP/1.1\r\n".format(self.path)
+        for header, value in headers.items():
+            request += "{}: {}\r\n".format(header, value)
         request += "\r\n"
 
         s.send(request.encode("utf8"))
