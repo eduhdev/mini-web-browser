@@ -1,0 +1,11 @@
+[package]
+name = "browser"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "browser"
+path = "main.rs"
+
+[dependencies]
+native-tls = "0.2"
