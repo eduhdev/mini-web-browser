@@ -1,8 +1,12 @@
 use native_tls::TlsConnector;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+use std::path::PathBuf;
+
+const DEFAULT_FILE: &str = "test.html";
 
 fn show(body: &str) {
     let mut in_tag = false;
@@ -32,7 +36,21 @@ struct Url {
 impl Url {
     fn new(url: &str) -> Self {
         let (scheme, rest) = url.split_once("://").expect("URL must contain ://");
-        assert!(matches!(scheme, "http" | "https"));
+        assert!(matches!(scheme, "http" | "https" | "file"));
+
+        if scheme == "file" {
+            let path = if rest.starts_with('/') {
+                rest.to_string()
+            } else {
+                format!("/{rest}")
+            };
+
+            return Self {
+                scheme: scheme.to_string(),
+                host: String::new(),
+                path,
+            };
+        }
 
         let normalized = if rest.contains('/') {
             rest.to_string()
@@ -52,6 +70,10 @@ impl Url {
     }
 
     fn request(&self) -> String {
+        if self.scheme == "file" {
+            return fs::read_to_string(&self.path).expect("failed to read local file");
+        }
+
         let (host, port) = if let Some((parsed_host, parsed_port)) = self.host.split_once(':') {
             (
                 parsed_host.to_string(),
@@ -136,6 +158,14 @@ trait ReadWrite: Read + Write {}
 impl<T: Read + Write> ReadWrite for T {}
 
 fn main() {
-    let url = env::args().nth(1).expect("usage: main <url>");
+    let url = env::args().nth(1).unwrap_or_else(default_file_url);
     load(&Url::new(&url));
+}
+
+fn default_file_url() -> String {
+    let base = option_env!("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| env::current_dir().expect("failed to get current directory"));
+    let path = base.join(DEFAULT_FILE);
+    format!("file://{}", path.display())
 }

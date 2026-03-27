@@ -1,5 +1,9 @@
 import socket
 import ssl
+from pathlib import Path
+
+
+DEFAULT_FILE = Path(__file__).with_name("test.html")
 
 def show(body):
     in_tag = False
@@ -20,7 +24,16 @@ def load(url):
 class URL:
     def __init__(self, url):
         self.scheme, url = url.split("://", 1)
-        assert self.scheme in ["http", "https"]
+        assert self.scheme in ["http", "https", "file"]
+
+        if self.scheme == "file":
+            if url.startswith("/"):
+                self.host = ""
+                self.path = url
+            else:
+                self.host = ""
+                self.path = "/" + url
+            return
 
         if "/" not in url:
             url = url + "/"
@@ -28,6 +41,10 @@ class URL:
         self.path = "/" + url
 
     def request(self):
+        if self.scheme == "file":
+            with open(self.path, "r", encoding="utf8") as f:
+                return f.read()
+
         s = socket.socket(
             socket.AF_INET,
             socket.SOCK_STREAM,
@@ -84,4 +101,8 @@ class URL:
 
 if __name__ == "__main__":
     import sys
-    load(URL(sys.argv[1]))
+    if len(sys.argv) > 1:
+        url = sys.argv[1]
+    else:
+        url = "file://" + str(DEFAULT_FILE)
+    load(URL(url))
