@@ -1,5 +1,6 @@
 import socket
 import ssl
+import time
 from pathlib import Path
 
 
@@ -49,6 +50,7 @@ def load(url):
 
 class URL:
     connections = {}
+    cache = {}
 
     def __init__(self, url):
         self.view_source = False
@@ -106,6 +108,12 @@ class URL:
             self.port = 443
 
         self.host = host
+
+        cached_response = self.get_cached_response()
+        if cached_response is not None:
+            status, response_headers, content = cached_response
+            return self.handle_response(status, response_headers, content, redirects)
+
         key = (self.scheme, self.host, self.port)
 
         if key in self.connections:
@@ -154,12 +162,9 @@ class URL:
         content_length = int(response_headers.get("content-length", 0))
         content = response.read(content_length).decode("utf8")
 
-        if 300 <= status < 400:
-            assert "location" in response_headers
-            assert redirects < MAX_REDIRECTS
-            return URL(self.resolve(response_headers["location"])).request(redirects + 1)
+        self.cache_response(status, response_headers, content)
 
-        return content
+        return self.handle_response(status, response_headers, content, redirects)
 
     def resolve(self, location):
         if location.startswith("//"):
@@ -175,6 +180,59 @@ class URL:
         if self.port == default_port:
             return self.host
         return "{}:{}".format(self.host, self.port)
+
+    def handle_response(self, status, response_headers, content, redirects):
+        if 300 <= status < 400:
+            assert "location" in response_headers
+            assert redirects < MAX_REDIRECTS
+            return URL(self.resolve(response_headers["location"])).request(redirects + 1)
+        return content
+
+    def cache_key(self):
+        return "{}://{}{}".format(self.scheme, self.authority(), self.path)
+
+    def get_cached_response(self):
+        key = self.cache_key()
+        if key not in self.cache:
+            return None
+
+        status, response_headers, content, expires_at = self.cache[key]
+        if expires_at is not None and time.time() > expires_at:
+            del self.cache[key]
+            return None
+        return status, response_headers, content
+
+    def cache_response(self, status, response_headers, content):
+        if status not in [200, 301, 404]:
+            return
+
+        cache_control = response_headers.get("cache-control")
+        if cache_control is None:
+            expires_at = None
+        else:
+            expires_at = self.parse_cache_control(cache_control)
+            if expires_at is False:
+                return
+
+        self.cache[self.cache_key()] = (
+            status,
+            response_headers.copy(),
+            content,
+            expires_at,
+        )
+
+    def parse_cache_control(self, cache_control):
+        expires_at = None
+        for value in cache_control.split(","):
+            value = value.strip()
+            if value == "no-store":
+                return False
+            if value.startswith("max-age="):
+                seconds = int(value.split("=", 1)[1])
+                expires_at = time.time() + seconds
+                continue
+            return False
+        return expires_at
 
 
 if __name__ == "__main__":

@@ -6,12 +6,14 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 const DEFAULT_FILE: &str = "test.html";
 const MAX_REDIRECTS: usize = 10;
 
 thread_local! {
     static CONNECTIONS: RefCell<HashMap<String, Connection>> = RefCell::new(HashMap::new());
+    static CACHE: RefCell<HashMap<String, CacheEntry>> = RefCell::new(HashMap::new());
 }
 
 fn show(body: &str) {
@@ -69,6 +71,13 @@ struct Url {
 
 struct Connection {
     response: BufReader<Box<dyn ReadWrite>>,
+}
+
+struct CacheEntry {
+    status: u16,
+    headers: HashMap<String, String>,
+    body: String,
+    expires_at: Option<Instant>,
 }
 
 impl Url {
@@ -159,6 +168,10 @@ impl Url {
             return fs::read_to_string(&self.path).expect("failed to read local file");
         }
 
+        if let Some((status, headers, body)) = self.get_cached_response() {
+            return self.handle_response(status, &headers, body, redirects);
+        }
+
         let (host, port) = if let Some((parsed_host, parsed_port)) = self.host.split_once(':') {
             (
                 parsed_host.to_string(),
@@ -184,7 +197,7 @@ impl Url {
 
         let key = format!("{}://{}:{}", self.scheme, host, port);
 
-        CONNECTIONS.with(|connections| {
+        let (status, response_headers, body) = CONNECTIONS.with(|connections| {
             let mut connections = connections.borrow_mut();
             let connection = connections
                 .entry(key)
@@ -243,16 +256,12 @@ impl Url {
                 .read_exact(&mut content)
                 .expect("failed to read response body");
 
-            if (300..400).contains(&status) {
-                let location = response_headers
-                    .get("location")
-                    .expect("redirect response missing location");
-                assert!(redirects < MAX_REDIRECTS, "too many redirects");
-                Url::new(&self.resolve(location)).request_with_redirects(redirects + 1)
-            } else {
-                String::from_utf8(content).expect("response body was not utf-8")
-            }
-        })
+            let body = String::from_utf8(content).expect("response body was not utf-8");
+            (status, response_headers, body)
+        });
+
+        self.cache_response(status, &response_headers, &body);
+        self.handle_response(status, &response_headers, body, redirects)
     }
 
     fn resolve(&self, location: &str) -> String {
@@ -292,6 +301,72 @@ impl Url {
             443
         }
     }
+
+    fn handle_response(
+        &self,
+        status: u16,
+        response_headers: &HashMap<String, String>,
+        body: String,
+        redirects: usize,
+    ) -> String {
+        if (300..400).contains(&status) {
+            let location = response_headers
+                .get("location")
+                .expect("redirect response missing location");
+            assert!(redirects < MAX_REDIRECTS, "too many redirects");
+            Url::new(&self.resolve(location)).request_with_redirects(redirects + 1)
+        } else {
+            body
+        }
+    }
+
+    fn cache_key(&self) -> String {
+        format!("{}://{}{}", self.scheme, self.authority(), self.path)
+    }
+
+    fn get_cached_response(&self) -> Option<(u16, HashMap<String, String>, String)> {
+        CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let key = self.cache_key();
+
+            match cache.get(&key) {
+                Some(entry) if entry.expires_at.is_none_or(|expires_at| Instant::now() <= expires_at) => {
+                    Some((entry.status, entry.headers.clone(), entry.body.clone()))
+                }
+                Some(_) => {
+                    cache.remove(&key);
+                    None
+                }
+                None => None,
+            }
+        })
+    }
+
+    fn cache_response(&self, status: u16, headers: &HashMap<String, String>, body: &str) {
+        if !matches!(status, 200 | 301 | 404) {
+            return;
+        }
+
+        let expires_at = match headers.get("cache-control") {
+            Some(value) => match parse_cache_control(value) {
+                Some(expires_at) => expires_at,
+                None => return,
+            },
+            None => None,
+        };
+
+        CACHE.with(|cache| {
+            cache.borrow_mut().insert(
+                self.cache_key(),
+                CacheEntry {
+                    status,
+                    headers: headers.clone(),
+                    body: body.to_string(),
+                    expires_at,
+                },
+            );
+        });
+    }
 }
 
 impl Connection {
@@ -329,4 +404,23 @@ fn default_file_url() -> String {
         .unwrap_or_else(|| env::current_dir().expect("failed to get current directory"));
     let path = base.join(DEFAULT_FILE);
     format!("file://{}", path.display())
+}
+
+fn parse_cache_control(cache_control: &str) -> Option<Option<Instant>> {
+    let mut expires_at = None;
+
+    for value in cache_control.split(',') {
+        let value = value.trim();
+        if value == "no-store" {
+            return None;
+        }
+        if let Some(seconds) = value.strip_prefix("max-age=") {
+            let seconds = seconds.parse::<u64>().expect("invalid max-age");
+            expires_at = Some(Instant::now() + Duration::from_secs(seconds));
+            continue;
+        }
+        return None;
+    }
+
+    Some(expires_at)
 }
