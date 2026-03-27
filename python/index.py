@@ -1,3 +1,4 @@
+import gzip
 import socket
 import ssl
 import time
@@ -135,6 +136,7 @@ class URL:
             "Host": self.host,
             "Connection": "keep-alive",
             "User-Agent": "eduhdev-browser/0.1",
+            "Accept-Encoding": "gzip",
         }
 
         request = "GET {} HTTP/1.1\r\n".format(self.path)
@@ -156,11 +158,17 @@ class URL:
             header, value = line.split(":", 1)
             response_headers[header.casefold()] = value.strip()
 
-        assert "transfer-encoding" not in response_headers
-        assert "content-encoding" not in response_headers
+        transfer_encoding = response_headers.get("transfer-encoding")
+        if transfer_encoding is None:
+            content_length = int(response_headers.get("content-length", 0))
+            content = response.read(content_length)
+        else:
+            assert transfer_encoding == "chunked"
+            content = self.read_chunked(response)
 
-        content_length = int(response_headers.get("content-length", 0))
-        content = response.read(content_length).decode("utf8")
+        if response_headers.get("content-encoding") == "gzip":
+            content = gzip.decompress(content)
+        content = content.decode("utf8")
 
         self.cache_response(status, response_headers, content)
 
@@ -233,6 +241,21 @@ class URL:
                 continue
             return False
         return expires_at
+
+    def read_chunked(self, response):
+        body = b""
+        while True:
+            line = response.readline().decode("utf8").strip()
+            chunk_size = int(line.split(";", 1)[0], 16)
+            if chunk_size == 0:
+                while True:
+                    trailer = response.readline()
+                    if trailer == b"\r\n":
+                        break
+                break
+            body += response.read(chunk_size)
+            assert response.read(2) == b"\r\n"
+        return body
 
 
 if __name__ == "__main__":

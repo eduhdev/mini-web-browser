@@ -1,3 +1,4 @@
+use flate2::read::GzDecoder;
 use native_tls::TlsConnector;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -187,6 +188,7 @@ impl Url {
             ("Host", host.as_str()),
             ("Connection", "keep-alive"),
             ("User-Agent", "eduhdev-browser/0.1"),
+            ("Accept-Encoding", "gzip"),
         ];
 
         let mut request = format!("GET {} HTTP/1.1\r\n", self.path);
@@ -242,19 +244,34 @@ impl Url {
                 response_headers.insert(header.to_ascii_lowercase(), value.trim().to_string());
             }
 
-            assert!(!response_headers.contains_key("transfer-encoding"));
-            assert!(!response_headers.contains_key("content-encoding"));
+            let content = match response_headers.get("transfer-encoding").map(String::as_str) {
+                None => {
+                    let content_length = response_headers
+                        .get("content-length")
+                        .map(|value| value.parse::<usize>().expect("invalid content-length"))
+                        .unwrap_or(0);
 
-            let content_length = response_headers
-                .get("content-length")
-                .map(|value| value.parse::<usize>().expect("invalid content-length"))
-                .unwrap_or(0);
+                    let mut content = vec![0; content_length];
+                    connection
+                        .response
+                        .read_exact(&mut content)
+                        .expect("failed to read response body");
+                    content
+                }
+                Some("chunked") => read_chunked(&mut connection.response),
+                Some(_) => panic!("unsupported transfer-encoding"),
+            };
 
-            let mut content = vec![0; content_length];
-            connection
-                .response
-                .read_exact(&mut content)
-                .expect("failed to read response body");
+            let content = if response_headers.get("content-encoding").map(String::as_str) == Some("gzip") {
+                let mut decoder = GzDecoder::new(&content[..]);
+                let mut decoded = Vec::new();
+                decoder
+                    .read_to_end(&mut decoded)
+                    .expect("failed to decompress gzip response");
+                decoded
+            } else {
+                content
+            };
 
             let body = String::from_utf8(content).expect("response body was not utf-8");
             (status, response_headers, body)
@@ -423,4 +440,48 @@ fn parse_cache_control(cache_control: &str) -> Option<Option<Instant>> {
     }
 
     Some(expires_at)
+}
+
+fn read_chunked(response: &mut BufReader<Box<dyn ReadWrite>>) -> Vec<u8> {
+    let mut body = Vec::new();
+
+    loop {
+        let mut line = String::new();
+        response
+            .read_line(&mut line)
+            .expect("failed to read chunk size");
+
+        let chunk_size = usize::from_str_radix(
+            line.trim_end().split(';').next().expect("missing chunk size"),
+            16,
+        )
+        .expect("invalid chunk size");
+
+        if chunk_size == 0 {
+            loop {
+                let mut trailer = String::new();
+                response
+                    .read_line(&mut trailer)
+                    .expect("failed to read chunk trailer");
+                if trailer == "\r\n" {
+                    break;
+                }
+            }
+            break;
+        }
+
+        let start = body.len();
+        body.resize(start + chunk_size, 0);
+        response
+            .read_exact(&mut body[start..])
+            .expect("failed to read chunk");
+
+        let mut crlf = [0; 2];
+        response
+            .read_exact(&mut crlf)
+            .expect("failed to read chunk terminator");
+        assert_eq!(crlf, *b"\r\n");
+    }
+
+    body
 }
