@@ -1,4 +1,5 @@
 use native_tls::TlsConnector;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -7,6 +8,10 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 
 const DEFAULT_FILE: &str = "test.html";
+
+thread_local! {
+    static CONNECTIONS: RefCell<HashMap<String, Connection>> = RefCell::new(HashMap::new());
+}
 
 fn show(body: &str) {
     let mut in_tag = false;
@@ -59,6 +64,10 @@ struct Url {
     scheme: String,
     host: String,
     path: String,
+}
+
+struct Connection {
+    response: BufReader<Box<dyn ReadWrite>>,
 }
 
 impl Url {
@@ -156,11 +165,9 @@ impl Url {
             (self.host.clone(), 443)
         };
 
-        let tcp_stream = TcpStream::connect((host.as_str(), port)).expect("failed to connect");
-
         let headers = vec![
             ("Host", host.as_str()),
-            ("Connection", "close"),
+            ("Connection", "keep-alive"),
             ("User-Agent", "eduhdev-browser/0.1"),
         ];
 
@@ -170,57 +177,86 @@ impl Url {
         }
         request.push_str("\r\n");
 
-        let mut response = if self.scheme == "https" {
-            let connector = TlsConnector::new().expect("failed to create TLS connector");
-            let mut stream = connector
-                .connect(&host, tcp_stream)
-                .expect("failed to establish TLS connection");
-            stream
+        let key = format!("{}://{}:{}", self.scheme, host, port);
+
+        CONNECTIONS.with(|connections| {
+            let mut connections = connections.borrow_mut();
+            let connection = connections
+                .entry(key)
+                .or_insert_with(|| Connection::new(&self.scheme, &host, port));
+
+            connection
+                .response
+                .get_mut()
                 .write_all(request.as_bytes())
                 .expect("failed to send request");
-            BufReader::new(Box::new(stream) as Box<dyn ReadWrite>)
-        } else {
-            let mut stream = tcp_stream;
-            stream
-                .write_all(request.as_bytes())
-                .expect("failed to send request");
-            BufReader::new(Box::new(stream) as Box<dyn ReadWrite>)
-        };
 
-        let mut statusline = String::new();
-        response
-            .read_line(&mut statusline)
-            .expect("failed to read status line");
+            let mut statusline = String::new();
+            connection
+                .response
+                .read_line(&mut statusline)
+                .expect("failed to read status line");
 
-        let mut parts = statusline.trim_end().splitn(3, ' ');
-        let _version = parts.next().expect("missing HTTP version");
-        let _status = parts.next().expect("missing status code");
-        let _explanation = parts.next().expect("missing status explanation");
+            let mut parts = statusline.trim_end().splitn(3, ' ');
+            let _version = parts.next().expect("missing HTTP version");
+            let _status = parts.next().expect("missing status code");
+            let _explanation = parts.next().expect("missing status explanation");
 
-        let mut response_headers = HashMap::new();
-        loop {
-            let mut line = String::new();
-            response.read_line(&mut line).expect("failed to read header");
+            let mut response_headers = HashMap::new();
+            loop {
+                let mut line = String::new();
+                connection
+                    .response
+                    .read_line(&mut line)
+                    .expect("failed to read header");
 
-            if line == "\r\n" {
-                break;
+                if line == "\r\n" {
+                    break;
+                }
+
+                let (header, value) = line
+                    .split_once(':')
+                    .expect("header line must contain ':'");
+                response_headers.insert(header.to_ascii_lowercase(), value.trim().to_string());
             }
 
-            let (header, value) = line
-                .split_once(':')
-                .expect("header line must contain ':'");
-            response_headers.insert(header.to_ascii_lowercase(), value.trim().to_string());
+            assert!(!response_headers.contains_key("transfer-encoding"));
+            assert!(!response_headers.contains_key("content-encoding"));
+
+            let content_length = response_headers
+                .get("content-length")
+                .expect("missing content-length")
+                .parse::<usize>()
+                .expect("invalid content-length");
+
+            let mut content = vec![0; content_length];
+            connection
+                .response
+                .read_exact(&mut content)
+                .expect("failed to read response body");
+
+            String::from_utf8(content).expect("response body was not utf-8")
+        })
+    }
+}
+
+impl Connection {
+    fn new(scheme: &str, host: &str, port: u16) -> Self {
+        let tcp_stream = TcpStream::connect((host, port)).expect("failed to connect");
+
+        let stream: Box<dyn ReadWrite> = if scheme == "https" {
+            let connector = TlsConnector::new().expect("failed to create TLS connector");
+            let stream = connector
+                .connect(host, tcp_stream)
+                .expect("failed to establish TLS connection");
+            Box::new(stream)
+        } else {
+            Box::new(tcp_stream)
+        };
+
+        Self {
+            response: BufReader::new(stream),
         }
-
-        assert!(!response_headers.contains_key("transfer-encoding"));
-        assert!(!response_headers.contains_key("content-encoding"));
-
-        let mut content = String::new();
-        response
-            .read_to_string(&mut content)
-            .expect("failed to read response body");
-
-        content
     }
 }
 

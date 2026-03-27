@@ -47,6 +47,8 @@ def load(url):
 
 
 class URL:
+    connections = {}
+
     def __init__(self, url):
         self.view_source = False
         self.inner = None
@@ -92,11 +94,6 @@ class URL:
             with open(self.path, "r", encoding="utf8") as f:
                 return f.read()
 
-        s = socket.socket(
-            socket.AF_INET,
-            socket.SOCK_STREAM,
-            proto=socket.IPPROTO_TCP
-        )
         host = self.host
 
         if ":" in host:
@@ -106,15 +103,28 @@ class URL:
             self.port = 80
         elif self.scheme == "https":
             self.port = 443
-            ctx = ssl.create_default_context()
-            s = ctx.wrap_socket(s, server_hostname=host)
 
         self.host = host
-        s.connect((self.host, self.port))
+        key = (self.scheme, self.host, self.port)
+
+        if key in self.connections:
+            s, response = self.connections[key]
+        else:
+            s = socket.socket(
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                proto=socket.IPPROTO_TCP
+            )
+            if self.scheme == "https":
+                ctx = ssl.create_default_context()
+                s = ctx.wrap_socket(s, server_hostname=self.host)
+            s.connect((self.host, self.port))
+            response = s.makefile("rb")
+            self.connections[key] = (s, response)
 
         headers = {
             "Host": self.host,
-            "Connection": "close",
+            "Connection": "keep-alive",
             "User-Agent": "eduhdev-browser/0.1",
         }
 
@@ -123,15 +133,14 @@ class URL:
             request += "{}: {}\r\n".format(header, value)
         request += "\r\n"
 
-        s.send(request.encode("utf8"))
+        s.sendall(request.encode("utf8"))
 
-        response = s.makefile("r", encoding="utf8", newline="\r\n")
-        statusline = response.readline()
+        statusline = response.readline().decode("utf8")
         version, status, explanation = statusline.split(" ", 2)
 
         response_headers = {}
         while True:
-            line = response.readline()
+            line = response.readline().decode("utf8")
             if line == "\r\n":
                 break
             header, value = line.split(":", 1)
@@ -139,9 +148,10 @@ class URL:
 
         assert "transfer-encoding" not in response_headers
         assert "content-encoding" not in response_headers
+        assert "content-length" in response_headers
 
-        content = response.read()
-        s.close()
+        content_length = int(response_headers["content-length"])
+        content = response.read(content_length).decode("utf8")
 
         return content
 
