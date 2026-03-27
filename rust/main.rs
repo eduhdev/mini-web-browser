@@ -45,11 +45,17 @@ fn show(body: &str) {
 
 fn load(url: &Url) {
     let body = url.request();
-    show(&body);
+    if url.view_source {
+        print!("{body}");
+    } else {
+        show(&body);
+    }
     println!();
 }
 
 struct Url {
+    view_source: bool,
+    inner: Option<Box<Url>>,
     scheme: String,
     host: String,
     path: String,
@@ -58,11 +64,23 @@ struct Url {
 impl Url {
     fn new(url: &str) -> Self {
         let (scheme, rest) = url.split_once(':').expect("URL must contain :");
-        assert!(matches!(scheme, "http" | "https" | "file" | "data"));
+        assert!(matches!(scheme, "http" | "https" | "file" | "data" | "view-source"));
+
+        if scheme == "view-source" {
+            return Self {
+                view_source: true,
+                inner: Some(Box::new(Self::new(rest))),
+                scheme: scheme.to_string(),
+                host: String::new(),
+                path: String::new(),
+            };
+        }
 
         if scheme == "data" {
             let (_media_type, data) = rest.split_once(',').expect("data URL must contain ','");
             return Self {
+                view_source: false,
+                inner: None,
                 scheme: scheme.to_string(),
                 host: String::new(),
                 path: data.to_string(),
@@ -83,6 +101,8 @@ impl Url {
             };
 
             return Self {
+                view_source: false,
+                inner: None,
                 scheme: scheme.to_string(),
                 host: String::new(),
                 path,
@@ -100,6 +120,8 @@ impl Url {
             .expect("URL must contain a host");
 
         Self {
+            view_source: false,
+            inner: None,
             scheme: scheme.to_string(),
             host: host.to_string(),
             path: format!("/{path}"),
@@ -107,6 +129,14 @@ impl Url {
     }
 
     fn request(&self) -> String {
+        if self.view_source {
+            return self
+                .inner
+                .as_ref()
+                .expect("view-source URL missing inner URL")
+                .request();
+        }
+
         if self.scheme == "data" {
             return self.path.clone();
         }

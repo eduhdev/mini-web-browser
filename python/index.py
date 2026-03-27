@@ -39,14 +39,24 @@ def show(body):
 
 def load(url):
     body = url.request()
-    show(body)
+    if url.view_source:
+        print(body, end="")
+    else:
+        show(body)
     print()
 
 
 class URL:
     def __init__(self, url):
+        self.view_source = False
+        self.inner = None
         self.scheme, url = url.split(":", 1)
-        assert self.scheme in ["http", "https", "file", "data"]
+        assert self.scheme in ["http", "https", "file", "data", "view-source"]
+
+        if self.scheme == "view-source":
+            self.view_source = True
+            self.inner = URL(url)
+            return
 
         if self.scheme == "data":
             self.host = ""
@@ -72,6 +82,9 @@ class URL:
         self.path = "/" + url
 
     def request(self):
+        if self.view_source:
+            return self.inner.request()
+
         if self.scheme == "data":
             return self.data
 
