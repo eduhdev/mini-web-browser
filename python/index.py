@@ -7,11 +7,32 @@ DEFAULT_FILE = Path(__file__).with_name("test.html")
 
 def show(body):
     in_tag = False
+    entity = ""
+    in_entity = False
     for c in body:
+        if in_entity:
+            entity += c
+            if entity == "&lt;":
+                print("<", end="")
+                entity = ""
+                in_entity = False
+            elif entity == "&gt;":
+                print(">", end="")
+                entity = ""
+                in_entity = False
+            elif c == ";":
+                print(entity, end="")
+                entity = ""
+                in_entity = False
+            continue
+
         if c == "<":
             in_tag = True
         elif c == ">":
             in_tag = False
+        elif c == "&" and not in_tag:
+            entity = c
+            in_entity = True
         elif not in_tag:
             print(c, end="")
 

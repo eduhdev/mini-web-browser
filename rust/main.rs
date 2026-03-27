@@ -10,12 +10,33 @@ const DEFAULT_FILE: &str = "test.html";
 
 fn show(body: &str) {
     let mut in_tag = false;
+    let mut entity = String::new();
+    let mut in_entity = false;
 
     for c in body.chars() {
-        if c == '<' {
+        if in_entity {
+            entity.push(c);
+
+            if entity == "&lt;" {
+                print!("<");
+                entity.clear();
+                in_entity = false;
+            } else if entity == "&gt;" {
+                print!(">");
+                entity.clear();
+                in_entity = false;
+            } else if c == ';' {
+                print!("{entity}");
+                entity.clear();
+                in_entity = false;
+            }
+        } else if c == '<' {
             in_tag = true;
         } else if c == '>' {
             in_tag = false;
+        } else if c == '&' && !in_tag {
+            entity.push(c);
+            in_entity = true;
         } else if !in_tag {
             print!("{c}");
         }
