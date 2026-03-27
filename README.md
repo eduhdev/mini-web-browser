@@ -1,6 +1,6 @@
 # Browser
 
-This project is a learning-focused browser implementation inspired by the book *Web Browser Engineering* by Pavel Panchekha and Chris Harrelson.
+This project is a learning-focused browser implementation inspired by the book *[Web Browser Engineering](https://browser.engineering/)* by Pavel Panchekha and Chris Harrelson.
 
 The book primarily builds the browser in Python, and this repository follows that approach while also mirroring the same ideas in Rust.
 
