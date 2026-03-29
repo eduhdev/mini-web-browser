@@ -11,16 +11,21 @@ SCROLL_STEP = 100
 class Browser:
     def __init__(self):
         self.window = tk.Tk()
+        self.width = WIDTH
+        self.height = HEIGHT
+        self.text = ""
+        self.display_list = []
         self.canvas = tk.Canvas(
             self.window,
             width=WIDTH,
             height=HEIGHT,
             highlightthickness=0
         )
-        self.canvas.pack()
+        self.canvas.pack(fill="both", expand=True)
         self.scroll = 0
         self.window.bind("<Down>", self.scrolldown)
         self.window.bind("<Up>", self.scrolltop)
+        self.window.bind("<Configure>", self.resize)
         self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set())
         self.window.bind_all("<MouseWheel>", self.scrollmouse)
         self.window.bind_all("<TouchpadScroll>", self.scrolltouchpad)
@@ -54,18 +59,25 @@ class Browser:
     def draw(self):
         self.canvas.delete("all")
         for x, y, c in self.display_list:
-            if y > self.scroll + HEIGHT: continue
+            if y > self.scroll + self.height: continue
             if y + VSTEP < self.scroll: continue
             self.canvas.create_text(x, y - self.scroll, text=c)
 
     def load(self, url):
         body = url.request()
-        text = lex(body)
-
-        self.display_list = layout(text)
+        self.text = lex(body)
+        self.display_list = layout(self.text, self.width)
         self.draw()
 
-def layout(text):
+    def resize(self, e):
+        self.width = e.width
+        self.height = e.height
+        if not self.text:
+            return
+        self.display_list = layout(self.text, self.width)
+        self.draw()
+
+def layout(text, width):
     display_list = []
     cursor_x, cursor_y = HSTEP, VSTEP
     for c in text:
@@ -77,7 +89,7 @@ def layout(text):
         display_list.append((cursor_x, cursor_y, c))
         cursor_x += HSTEP
 
-        if cursor_x >= WIDTH - HSTEP:
+        if cursor_x >= width - HSTEP:
             cursor_x = HSTEP
             cursor_y += VSTEP
         

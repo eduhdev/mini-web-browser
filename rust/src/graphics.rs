@@ -26,15 +26,21 @@ pub fn run(url: Option<String>) -> eframe::Result<()> {
 }
 
 struct Browser {
+    text: String,
     display_list: Vec<(f32, f32, char)>,
     scroll: f32,
+    width: f32,
+    height: f32,
 }
 
 impl Browser {
     fn new(url: Option<String>) -> Self {
         let mut browser = Self {
+            text: String::new(),
             display_list: Vec::new(),
             scroll: 0.0,
+            width: WIDTH,
+            height: HEIGHT,
         };
 
         if let Some(url) = url {
@@ -50,7 +56,7 @@ impl Browser {
         let color = ui.visuals().text_color();
 
         for &(x, y, c) in &self.display_list {
-            if y > self.scroll + HEIGHT {
+            if y > self.scroll + self.height {
                 continue;
             }
             if y + VSTEP < self.scroll {
@@ -69,8 +75,8 @@ impl Browser {
 
     fn load(&mut self, url: Url) {
         let body = url.request();
-        let text = lex(&body);
-        self.display_list = layout(&text);
+        self.text = lex(&body);
+        self.display_list = layout(&self.text, self.width);
         self.scroll = 0.0;
     }
 
@@ -85,6 +91,15 @@ impl Browser {
 
 impl eframe::App for Browser {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let new_size = ctx.input(|input| input.content_rect().size());
+        if new_size.x != self.width || new_size.y != self.height {
+            self.width = new_size.x;
+            self.height = new_size.y;
+            if !self.text.is_empty() {
+                self.display_list = layout(&self.text, self.width);
+            }
+        }
+
         ctx.input(|input| {
             if input.key_pressed(egui::Key::ArrowDown) {
                 self.scrollby(SCROLL_STEP);
@@ -105,7 +120,7 @@ impl eframe::App for Browser {
     }
 }
 
-fn layout(text: &str) -> Vec<(f32, f32, char)> {
+fn layout(text: &str, width: f32) -> Vec<(f32, f32, char)> {
     let mut display_list = Vec::new();
     let mut cursor_x = HSTEP;
     let mut cursor_y = VSTEP;
@@ -120,7 +135,7 @@ fn layout(text: &str) -> Vec<(f32, f32, char)> {
         display_list.push((cursor_x, cursor_y, c));
         cursor_x += HSTEP;
 
-        if cursor_x >= WIDTH - HSTEP {
+        if cursor_x >= width - HSTEP {
             cursor_x = HSTEP;
             cursor_y += VSTEP;
         }
