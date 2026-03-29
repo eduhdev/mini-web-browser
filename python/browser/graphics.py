@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+import argparse
 import base64
 import signal
 import sys
@@ -16,13 +17,14 @@ SCROLLBAR_WIDTH = 8
 EMOJI_DIR = Path(__file__).resolve().parents[2] / "openmoji"
 
 class Browser:
-    def __init__(self):
+    def __init__(self, rtl=False):
         self.window = tk.Tk()
         self.width = WIDTH
         self.height = HEIGHT
         self.text = ""
         self.display_list = []
         self.emoji_cache = {}
+        self.rtl = rtl
         self.canvas = tk.Canvas(
             self.window,
             width=WIDTH,
@@ -98,7 +100,7 @@ class Browser:
     def load(self, url):
         body = url.request()
         self.text = lex(body)
-        self.display_list = layout(self.text, self.width)
+        self.display_list = layout(self.text, self.width, self.rtl)
         self.scroll = 0
         self.draw()
 
@@ -107,7 +109,7 @@ class Browser:
         self.height = e.height
         if not self.text:
             return
-        self.display_list = layout(self.text, self.width)
+        self.display_list = layout(self.text, self.width, self.rtl)
         self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
 
@@ -135,23 +137,41 @@ class Browser:
             outline="light blue"
         )
 
-def layout(text, width):
+def layout(text, width, rtl=False):
     display_list = []
-    cursor_x, cursor_y = HSTEP, VSTEP
+    cursor_y = VSTEP
+    line = []
+    max_columns = max(1, int((width - SCROLLBAR_WIDTH) // HSTEP) - 1)
+
     for token in tokenize(text):
         if token == "\n":
-            cursor_x = HSTEP
+            flush_line(display_list, line, cursor_y, width, rtl)
+            line = []
             cursor_y += VSTEP + VSTEP // 2
             continue
 
+        line.append(token)
+        if len(line) >= max_columns:
+            flush_line(display_list, line, cursor_y, width, rtl)
+            line = []
+            cursor_y += VSTEP
+
+    flush_line(display_list, line, cursor_y, width, rtl)
+    return display_list
+
+def flush_line(display_list, line, cursor_y, width, rtl):
+    if not line:
+        return
+
+    if rtl:
+        right_edge = width - HSTEP - SCROLLBAR_WIDTH
+        cursor_x = max(HSTEP, right_edge - HSTEP * (len(line) - 1))
+    else:
+        cursor_x = HSTEP
+
+    for token in line:
         display_list.append((cursor_x, cursor_y, token))
         cursor_x += HSTEP
-
-        if cursor_x >= width - HSTEP:
-            cursor_x = HSTEP
-            cursor_y += VSTEP
-        
-    return display_list
 
 def tokenize(text):
     tokens = []
@@ -192,8 +212,8 @@ def emoji_path_for(token):
         return emoji_path
     return None
 
-def launch(url=None):
-    browser = Browser()
+def launch(url=None, rtl=False):
+    browser = Browser(rtl=rtl)
     if url is not None:
         browser.load(URL(url))
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
@@ -214,5 +234,12 @@ def launch(url=None):
     if previous_sigtstp_handler is not None:
         signal.signal(signal.SIGTSTP, previous_sigtstp_handler)
 
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("url", nargs="?")
+    parser.add_argument("--rtl", action="store_true")
+    args = parser.parse_args(argv)
+    launch(args.url, rtl=args.rtl)
+
 if __name__ == "__main__":
-    launch(sys.argv[1] if len(sys.argv) > 1 else None)
+    main()

@@ -28,7 +28,7 @@ static OPENMOJI_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         .join("openmoji")
 });
 
-pub fn run(url: Option<String>) -> eframe::Result<()> {
+pub fn run(url: Option<String>, rtl: bool) -> eframe::Result<()> {
     let _ = flag::register(SIGINT, INTERRUPTED.clone());
     let _ = flag::register(SIGTSTP, INTERRUPTED.clone());
 
@@ -41,7 +41,7 @@ pub fn run(url: Option<String>) -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             install_system_font(&cc.egui_ctx);
-            Ok(Box::new(Browser::new(url)))
+            Ok(Box::new(Browser::new(url, rtl)))
         }),
     )
 }
@@ -52,17 +52,19 @@ struct Browser {
     scroll: f32,
     width: f32,
     height: f32,
+    rtl: bool,
     emoji_cache: HashMap<String, egui::TextureHandle>,
 }
 
 impl Browser {
-    fn new(url: Option<String>) -> Self {
+    fn new(url: Option<String>, rtl: bool) -> Self {
         let mut browser = Self {
             text: String::new(),
             display_list: Vec::new(),
             scroll: 0.0,
             width: WIDTH,
             height: HEIGHT,
+            rtl,
             emoji_cache: HashMap::new(),
         };
 
@@ -115,7 +117,7 @@ impl Browser {
     fn load(&mut self, url: Url) {
         let body = url.request();
         self.text = lex(&body);
-        self.display_list = layout(&self.text, self.width);
+        self.display_list = layout(&self.text, self.width, self.rtl);
         self.scroll = 0.0;
     }
 
@@ -175,7 +177,7 @@ impl eframe::App for Browser {
             self.width = new_size.x;
             self.height = new_size.y;
             if !self.text.is_empty() {
-                self.display_list = layout(&self.text, self.width);
+                self.display_list = layout(&self.text, self.width, self.rtl);
                 self.scroll = self.scroll.min(self.max_scroll());
             }
         }
@@ -200,28 +202,54 @@ impl eframe::App for Browser {
     }
 }
 
-fn layout(text: &str, width: f32) -> Vec<(f32, f32, String)> {
+fn layout(text: &str, width: f32, rtl: bool) -> Vec<(f32, f32, String)> {
     let mut display_list = Vec::new();
-    let mut cursor_x = HSTEP;
     let mut cursor_y = VSTEP;
+    let mut line = Vec::new();
+    let max_columns = (((width - SCROLLBAR_WIDTH) / HSTEP) as i32 - 1).max(1) as usize;
 
     for token in tokenize(text) {
         if token == "\n" {
-            cursor_x = HSTEP;
+            flush_line(&mut display_list, &line, cursor_y, width, rtl);
+            line.clear();
             cursor_y += 1.5 * VSTEP;
             continue;
         }
 
-        display_list.push((cursor_x, cursor_y, token));
-        cursor_x += HSTEP;
-
-        if cursor_x >= width - HSTEP {
-            cursor_x = HSTEP;
+        line.push(token);
+        if line.len() >= max_columns {
+            flush_line(&mut display_list, &line, cursor_y, width, rtl);
+            line.clear();
             cursor_y += VSTEP;
         }
     }
 
+    flush_line(&mut display_list, &line, cursor_y, width, rtl);
     display_list
+}
+
+fn flush_line(
+    display_list: &mut Vec<(f32, f32, String)>,
+    line: &[String],
+    cursor_y: f32,
+    width: f32,
+    rtl: bool,
+) {
+    if line.is_empty() {
+        return;
+    }
+
+    let mut cursor_x = if rtl {
+        let right_edge = width - HSTEP - SCROLLBAR_WIDTH;
+        (right_edge - HSTEP * (line.len().saturating_sub(1) as f32)).max(HSTEP)
+    } else {
+        HSTEP
+    };
+
+    for token in line {
+        display_list.push((cursor_x, cursor_y, token.clone()));
+        cursor_x += HSTEP;
+    }
 }
 
 fn install_system_font(ctx: &egui::Context) {
