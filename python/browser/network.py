@@ -54,20 +54,42 @@ class URL:
     cache = {}
 
     def __init__(self, url):
+        self.scheme = "about"
+        self.host = ""
+        self.path = "blank"
         self.view_source = False
         self.inner = None
-        self.scheme, url = url.split(":", 1)
-        assert self.scheme in ["http", "https", "file", "data", "view-source"]
+        self.port = None
+
+        try:
+            self.scheme, url = url.split(":", 1)
+        except ValueError:
+            return
+
+        if self.scheme not in ["http", "https", "file", "data", "view-source", "about"]:
+            self.make_blank()
+            return
 
         if self.scheme == "view-source":
-            self.view_source = True
-            self.inner = URL(url)
+            try:
+                self.view_source = True
+                self.inner = URL(url)
+            except Exception:
+                self.make_blank()
+            return
+
+        if self.scheme == "about":
+            if url == "blank":
+                return
+            self.make_blank()
             return
 
         if self.scheme == "data":
-            self.host = ""
-            self.path = ""
-            self.media_type, self.data = url.split(",", 1)
+            try:
+                self.path = ""
+                self.media_type, self.data = url.split(",", 1)
+            except ValueError:
+                self.make_blank()
             return
 
         if url.startswith("//"):
@@ -75,21 +97,37 @@ class URL:
 
         if self.scheme == "file":
             if url.startswith("/"):
-                self.host = ""
                 self.path = url
             else:
-                self.host = ""
                 self.path = "/" + url
             return
 
         if "/" not in url:
             url = url + "/"
+        if "/" not in url:
+            self.make_blank()
+            return
+
         self.host, url = url.split("/", 1)
+        if not self.host:
+            self.make_blank()
+            return
         self.path = "/" + url
+
+    def make_blank(self):
+        self.scheme = "about"
+        self.host = ""
+        self.path = "blank"
+        self.port = None
+        self.view_source = False
+        self.inner = None
 
     def request(self, redirects=0):
         if self.view_source:
             return self.inner.request(redirects)
+
+        if self.scheme == "about":
+            return ""
 
         if self.scheme == "data":
             return self.data

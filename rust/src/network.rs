@@ -80,8 +80,14 @@ struct CacheEntry {
 
 impl Url {
     pub fn new(url: &str) -> Self {
-        let (scheme, rest) = url.split_once(':').expect("URL must contain :");
-        assert!(matches!(scheme, "http" | "https" | "file" | "data" | "view-source"));
+        let mut blank = Self::blank();
+        let Some((scheme, rest)) = url.split_once(':') else {
+            return blank;
+        };
+
+        if !matches!(scheme, "http" | "https" | "file" | "data" | "view-source" | "about") {
+            return blank;
+        }
 
         if scheme == "view-source" {
             return Self {
@@ -93,8 +99,17 @@ impl Url {
             };
         }
 
+        if scheme == "about" {
+            if rest == "blank" {
+                return blank;
+            }
+            return Self::blank();
+        }
+
         if scheme == "data" {
-            let (_media_type, data) = rest.split_once(',').expect("data URL must contain ','");
+            let Some((_media_type, data)) = rest.split_once(',') else {
+                return Self::blank();
+            };
             return Self {
                 view_source: false,
                 inner: None,
@@ -132,17 +147,17 @@ impl Url {
             format!("{rest}/")
         };
 
-        let (host, path) = normalized
-            .split_once('/')
-            .expect("URL must contain a host");
-
-        Self {
-            view_source: false,
-            inner: None,
-            scheme: scheme.to_string(),
-            host: host.to_string(),
-            path: format!("/{path}"),
+        let Some((host, path)) = normalized.split_once('/') else {
+            return Self::blank();
+        };
+        if host.is_empty() {
+            return Self::blank();
         }
+
+        blank.scheme = scheme.to_string();
+        blank.host = host.to_string();
+        blank.path = format!("/{path}");
+        blank
     }
 
     pub fn request(&self) -> String {
@@ -156,6 +171,10 @@ impl Url {
                 .as_ref()
                 .expect("view-source URL missing inner URL")
                 .request_with_redirects(redirects);
+        }
+
+        if self.scheme == "about" {
+            return String::new();
         }
 
         if self.scheme == "data" {
@@ -286,7 +305,17 @@ impl Url {
         } else if location.split('/').next().unwrap_or("").contains(':') {
             location.to_string()
         } else {
-            panic!("unsupported redirect location");
+            "about:blank".to_string()
+        }
+    }
+
+    fn blank() -> Self {
+        Self {
+            view_source: false,
+            inner: None,
+            scheme: "about".to_string(),
+            host: String::new(),
+            path: "blank".to_string(),
         }
     }
 
