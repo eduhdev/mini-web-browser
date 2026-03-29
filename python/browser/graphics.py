@@ -7,6 +7,7 @@ from .network import URL, lex
 WIDTH, HEIGHT = 800, 600
 HSTEP, VSTEP = 13, 18
 SCROLL_STEP = 100
+SCROLLBAR_WIDTH = 8
 
 class Browser:
     def __init__(self):
@@ -50,7 +51,8 @@ class Browser:
         self.scrollby(-delta_y)
 
     def scrollby(self, amount):
-        new_scroll = max(self.scroll + amount, 0)
+        max_scroll = self.max_scroll()
+        new_scroll = min(max(self.scroll + amount, 0), max_scroll)
         if new_scroll == self.scroll:
             return
         self.scroll = new_scroll
@@ -62,11 +64,13 @@ class Browser:
             if y > self.scroll + self.height: continue
             if y + VSTEP < self.scroll: continue
             self.canvas.create_text(x, y - self.scroll, text=c)
+        self.draw_scrollbar()
 
     def load(self, url):
         body = url.request()
         self.text = lex(body)
         self.display_list = layout(self.text, self.width)
+        self.scroll = 0
         self.draw()
 
     def resize(self, e):
@@ -75,7 +79,32 @@ class Browser:
         if not self.text:
             return
         self.display_list = layout(self.text, self.width)
+        self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
+
+    def document_height(self):
+        if not self.display_list:
+            return self.height
+        return self.display_list[-1][1] + VSTEP
+
+    def max_scroll(self):
+        return max(self.document_height() - self.height, 0)
+
+    def draw_scrollbar(self):
+        document_height = self.document_height()
+        if document_height <= self.height:
+            return
+
+        top = self.scroll / document_height * self.height
+        bottom = (self.scroll + self.height) / document_height * self.height
+        self.canvas.create_rectangle(
+            self.width - SCROLLBAR_WIDTH,
+            top,
+            self.width,
+            bottom,
+            fill="light blue",
+            outline="light blue"
+        )
 
 def layout(text, width):
     display_list = []

@@ -9,6 +9,7 @@ const HEIGHT: f32 = 600.0;
 const HSTEP: f32 = 13.0;
 const VSTEP: f32 = 18.0;
 const SCROLL_STEP: f32 = 100.0;
+const SCROLLBAR_WIDTH: f32 = 8.0;
 
 pub fn run(url: Option<String>) -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -71,6 +72,8 @@ impl Browser {
                 color,
             );
         }
+
+        self.draw_scrollbar(painter);
     }
 
     fn load(&mut self, url: Url) {
@@ -81,11 +84,37 @@ impl Browser {
     }
 
     fn scrollby(&mut self, amount: f32) {
-        let new_scroll = (self.scroll + amount).max(0.0);
+        let new_scroll = (self.scroll + amount).clamp(0.0, self.max_scroll());
         if new_scroll == self.scroll {
             return;
         }
         self.scroll = new_scroll;
+    }
+
+    fn document_height(&self) -> f32 {
+        self.display_list
+            .last()
+            .map(|(_, y, _)| *y + VSTEP)
+            .unwrap_or(self.height)
+    }
+
+    fn max_scroll(&self) -> f32 {
+        (self.document_height() - self.height).max(0.0)
+    }
+
+    fn draw_scrollbar(&self, painter: &egui::Painter) {
+        let document_height = self.document_height();
+        if document_height <= self.height {
+            return;
+        }
+
+        let top = self.scroll / document_height * self.height;
+        let bottom = (self.scroll + self.height) / document_height * self.height;
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(self.width - SCROLLBAR_WIDTH, top),
+            egui::pos2(self.width, bottom),
+        );
+        painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(173, 216, 230));
     }
 }
 
@@ -97,6 +126,7 @@ impl eframe::App for Browser {
             self.height = new_size.y;
             if !self.text.is_empty() {
                 self.display_list = layout(&self.text, self.width);
+                self.scroll = self.scroll.min(self.max_scroll());
             }
         }
 
