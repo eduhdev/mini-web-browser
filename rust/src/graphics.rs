@@ -50,6 +50,13 @@ impl Browser {
         let color = ui.visuals().text_color();
 
         for &(x, y, c) in &self.display_list {
+            if y > self.scroll + HEIGHT {
+                continue;
+            }
+            if y + VSTEP < self.scroll {
+                continue;
+            }
+
             painter.text(
                 egui::pos2(x, y - self.scroll),
                 egui::Align2::LEFT_TOP,
