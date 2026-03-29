@@ -98,6 +98,12 @@ fn layout(text: &str) -> Vec<(f32, f32, char)> {
     let mut cursor_y = VSTEP;
 
     for c in text.chars() {
+        if c == '\n' {
+            cursor_x = HSTEP;
+            cursor_y += 1.5 * VSTEP;
+            continue;
+        }
+
         display_list.push((cursor_x, cursor_y, c));
         cursor_x += HSTEP;
 
