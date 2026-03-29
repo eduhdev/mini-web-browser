@@ -14,21 +14,41 @@ class Browser:
         self.canvas = tk.Canvas(
             self.window,
             width=WIDTH,
-            height=HEIGHT
+            height=HEIGHT,
+            highlightthickness=0
         )
         self.canvas.pack()
         self.scroll = 0
         self.window.bind("<Down>", self.scrolldown)
         self.window.bind("<Up>", self.scrolltop)
+        self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set())
+        self.window.bind_all("<MouseWheel>", self.scrollmouse)
+        self.window.bind_all("<TouchpadScroll>", self.scrolltouchpad)
     
     def scrolldown(self, e):
-        self.scroll += SCROLL_STEP
-        self.draw()
+        self.scrollby(SCROLL_STEP)
 
     def scrolltop(self, e):
-        if self.scroll == 0:
+        self.scrollby(-SCROLL_STEP)
+
+    def scrollmouse(self, e):
+        if e.delta == 0:
             return
-        self.scroll -= SCROLL_STEP
+        self.scrollby(-e.delta * 4)
+
+    def scrolltouchpad(self, e):
+        delta_y = e.delta & 0xffff
+        if delta_y >= 0x8000:
+            delta_y -= 0x10000
+        if delta_y == 0:
+            return
+        self.scrollby(-delta_y)
+
+    def scrollby(self, amount):
+        new_scroll = max(self.scroll + amount, 0)
+        if new_scroll == self.scroll:
+            return
+        self.scroll = new_scroll
         self.draw()
         
     def draw(self):

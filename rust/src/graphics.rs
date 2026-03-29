@@ -73,16 +73,29 @@ impl Browser {
         self.display_list = layout(&text);
         self.scroll = 0.0;
     }
+
+    fn scrollby(&mut self, amount: f32) {
+        let new_scroll = (self.scroll + amount).max(0.0);
+        if new_scroll == self.scroll {
+            return;
+        }
+        self.scroll = new_scroll;
+    }
 }
 
 impl eframe::App for Browser {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.input(|input| {
             if input.key_pressed(egui::Key::ArrowDown) {
-                self.scroll += SCROLL_STEP;
+                self.scrollby(SCROLL_STEP);
             }
-            if input.key_pressed(egui::Key::ArrowUp) && self.scroll > 0.0 {
-                self.scroll = (self.scroll - SCROLL_STEP).max(0.0);
+            if input.key_pressed(egui::Key::ArrowUp) {
+                self.scrollby(-SCROLL_STEP);
+            }
+
+            let delta_y = input.raw_scroll_delta.y;
+            if delta_y != 0.0 {
+                self.scrollby(-delta_y);
             }
         });
 
