@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+import signal
 import sys
 
 from .network import URL, lex
@@ -128,7 +129,23 @@ def launch(url=None):
     browser = Browser()
     if url is not None:
         browser.load(URL(url))
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+    previous_sigtstp_handler = (
+        signal.getsignal(signal.SIGTSTP)
+        if hasattr(signal, "SIGTSTP")
+        else None
+    )
+
+    def handle_stop(signum, frame):
+        browser.window.after(0, browser.window.destroy)
+
+    signal.signal(signal.SIGINT, handle_stop)
+    if hasattr(signal, "SIGTSTP"):
+        signal.signal(signal.SIGTSTP, handle_stop)
     browser.window.mainloop()
+    signal.signal(signal.SIGINT, previous_sigint_handler)
+    if previous_sigtstp_handler is not None:
+        signal.signal(signal.SIGTSTP, previous_sigtstp_handler)
 
 if __name__ == "__main__":
     launch(sys.argv[1] if len(sys.argv) > 1 else None)

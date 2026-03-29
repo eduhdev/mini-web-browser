@@ -1,6 +1,11 @@
 use eframe::egui;
+use signal_hook::consts::signal::{SIGINT, SIGTSTP};
+use signal_hook::flag;
 use std::fs;
 use std::path::Path;
+use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use crate::network::{lex, Url};
 
@@ -10,8 +15,12 @@ const HSTEP: f32 = 13.0;
 const VSTEP: f32 = 18.0;
 const SCROLL_STEP: f32 = 100.0;
 const SCROLLBAR_WIDTH: f32 = 8.0;
+static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
 pub fn run(url: Option<String>) -> eframe::Result<()> {
+    let _ = flag::register(SIGINT, INTERRUPTED.clone());
+    let _ = flag::register(SIGTSTP, INTERRUPTED.clone());
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([WIDTH, HEIGHT]),
         ..Default::default()
@@ -120,6 +129,10 @@ impl Browser {
 
 impl eframe::App for Browser {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if INTERRUPTED.load(Ordering::Relaxed) {
+            process::exit(0);
+        }
+
         let new_size = ctx.input(|input| input.content_rect().size());
         if new_size.x != self.width || new_size.y != self.height {
             self.width = new_size.x;
