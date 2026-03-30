@@ -11,6 +11,7 @@ const REGULAR_FAMILY: &str = "browser-regular";
 const BOLD_FAMILY: &str = "browser-bold";
 const ITALIC_FAMILY: &str = "browser-italic";
 const BOLD_ITALIC_FAMILY: &str = "browser-bold-italic";
+const BASE_FONT_SIZE: f32 = 14.0;
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct WordKey {
@@ -58,7 +59,7 @@ impl Layout {
             cursor_y: VSTEP,
             weight: "normal",
             style: "roman",
-            size: 12.0,
+            size: BASE_FONT_SIZE,
             line: Vec::new(),
         };
 

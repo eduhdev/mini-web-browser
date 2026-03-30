@@ -7,7 +7,7 @@ use std::sync::{Arc, LazyLock};
 use crate::constants::{EMOJI_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
 use crate::emoji::EmojiCache;
 use crate::layout::{DisplayItem, FontCache, Layout};
-use crate::network::{lex, Token, Url};
+use crate::network::{default_file_url, lex, Token, Url};
 
 static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
@@ -53,9 +53,8 @@ impl Browser {
             font_cache: FontCache::new(),
         };
 
-        if let Some(url) = url {
-            browser.load(Url::new(&url));
-        }
+        let url = url.unwrap_or_else(default_file_url);
+        browser.load(Url::new(&url));
 
         browser
     }

@@ -5,7 +5,7 @@ from .constants import HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
 from .emoji import EmojiCache
 from .fonts import get_font
 from .layout import Layout
-from .network import URL, lex
+from .network import DEFAULT_FILE, URL, lex
 
 class Browser:
     def __init__(self, rtl=False):
@@ -114,8 +114,9 @@ class Browser:
 
 def launch(url=None, rtl=False):
     browser = Browser(rtl=rtl)
-    if url is not None:
-        browser.load(URL(url))
+    if url is None:
+        url = "file://" + str(DEFAULT_FILE)
+    browser.load(URL(url))
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
     previous_sigtstp_handler = (
         signal.getsignal(signal.SIGTSTP)

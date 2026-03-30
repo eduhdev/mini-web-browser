@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 
 const MAX_REDIRECTS: usize = 10;
 
+pub fn default_file_url() -> String {
+    format!("file://{}/test.html", env!("CARGO_MANIFEST_DIR"))
+}
+
 #[derive(Clone, Debug)]
 pub enum Token {
     Text(String),
