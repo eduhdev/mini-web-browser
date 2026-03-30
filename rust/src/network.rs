@@ -5,11 +5,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::path::PathBuf;
 use std::thread_local;
 use std::time::{Duration, Instant};
 
-pub const DEFAULT_FILE: &str = "test.html";
 const MAX_REDIRECTS: usize = 10;
 
 #[derive(Clone, Debug)]
@@ -21,10 +19,6 @@ pub enum Token {
 thread_local! {
     static CONNECTIONS: RefCell<HashMap<String, Connection>> = RefCell::new(HashMap::new());
     static CACHE: RefCell<HashMap<String, CacheEntry>> = RefCell::new(HashMap::new());
-}
-
-pub fn fetch(url: &str) -> String {
-    Url::new(url).request()
 }
 
 pub fn lex(body: &str) -> Vec<Token> {
@@ -496,14 +490,6 @@ impl Connection {
 trait ReadWrite: Read + Write {}
 
 impl<T: Read + Write> ReadWrite for T {}
-
-pub fn default_file_url() -> String {
-    let base = option_env!("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().expect("failed to get current directory"));
-    let path = base.join(DEFAULT_FILE);
-    format!("file://{}", path.display())
-}
 
 fn parse_cache_control(cache_control: &str) -> Option<Option<Instant>> {
     let mut expires_at = None;

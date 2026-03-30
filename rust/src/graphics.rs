@@ -63,7 +63,7 @@ impl Browser {
         let color = ui.visuals().text_color();
         let ctx = ui.ctx().clone();
 
-        for (x, y, token, bold, italic) in self.display_list.clone() {
+        for (x, y, token, bold, italic, size) in self.display_list.clone() {
             if y > self.scroll + self.height {
                 continue;
             }
@@ -83,7 +83,7 @@ impl Browser {
                     egui::Color32::WHITE,
                 );
             } else {
-                let galley = layout_word(&ctx, &token, bold, italic, color);
+                let galley = layout_word(&ctx, &token, bold, italic, size, color);
                 let pos = egui::pos2(x, y - self.scroll);
                 painter.galley(pos, galley.clone(), color);
                 if bold {
@@ -118,7 +118,7 @@ impl Browser {
     fn document_height(&self) -> f32 {
         self.display_list
             .last()
-            .map(|(_, y, _, _, _)| *y + VSTEP)
+            .map(|(_, y, _, _, _, _)| *y + VSTEP)
             .unwrap_or(self.height)
     }
 
