@@ -1,9 +1,9 @@
 import tkinter as tk
-import tkinter.font
 import argparse
 import signal
-from .constants import FONT_FAMILY, FONT_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
+from .constants import HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
 from .emoji import EmojiCache
+from .fonts import get_font
 from .layout import Layout
 from .network import URL, lex
 
@@ -15,7 +15,6 @@ class Browser:
         self.tokens = []
         self.display_list = []
         self.emoji_cache = EmojiCache()
-        self.font_cache = {}
         self.rtl = rtl
         self.canvas = tk.Canvas(
             self.window,
@@ -76,9 +75,7 @@ class Browser:
     def load(self, url):
         body = url.request()
         self.tokens = lex(body)
-        self.display_list = Layout(
-            self.tokens, self.width, self.rtl, self.get_font
-        ).display_list
+        self.display_list = Layout(self.tokens, self.width, self.rtl, get_font).display_list
         self.scroll = 0
         self.draw()
 
@@ -87,9 +84,7 @@ class Browser:
         self.height = e.height
         if not self.tokens:
             return
-        self.display_list = Layout(
-            self.tokens, self.width, self.rtl, self.get_font
-        ).display_list
+        self.display_list = Layout(self.tokens, self.width, self.rtl, get_font).display_list
         self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
 
@@ -116,17 +111,6 @@ class Browser:
             fill="light blue",
             outline="light blue"
         )
-
-    def get_font(self, weight="normal", style="roman", size=12):
-        key = (weight, style, size)
-        if key not in self.font_cache:
-            self.font_cache[key] = tkinter.font.Font(
-                family=FONT_FAMILY,
-                size=size,
-                weight=weight,
-                slant=style,
-            )
-        return self.font_cache[key]
 
 def launch(url=None, rtl=False):
     browser = Browser(rtl=rtl)

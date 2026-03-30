@@ -1,29 +1,16 @@
-import tkinter.font
-
-from .constants import FONT_FAMILY, HSTEP, SCROLLBAR_WIDTH, VSTEP
+from .constants import HSTEP, SCROLLBAR_WIDTH, VSTEP
+from .fonts import get_font
 from .network import Text, extract_text
 
 
 class Layout:
-    def __init__(self, tokens, width, rtl=False, get_font=None):
-        if get_font is None:
-            font_cache = {}
-
-            def get_font(weight="normal", style="roman", size=12):
-                key = (weight, style, size)
-                if key not in font_cache:
-                    font_cache[key] = tkinter.font.Font(
-                        family=FONT_FAMILY,
-                        size=size,
-                        weight=weight,
-                        slant=style,
-                    )
-                return font_cache[key]
-
+    def __init__(self, tokens, width, rtl=False, font_getter=None):
+        if font_getter is None:
+            font_getter = get_font
         self.display_list = []
         self.width = width
         self.rtl = rtl
-        self.get_font = get_font
+        self.get_font = font_getter
         self.cursor_x = HSTEP
         self.cursor_y = VSTEP
         self.weight = "normal"
@@ -63,7 +50,7 @@ class Layout:
             self.cursor_y += VSTEP
 
     def word(self, word):
-        font = self.get_font(self.weight, self.style, self.size)
+        font = self.get_font(self.size, self.weight, self.style)
         w = font.measure(word)
 
         if self.cursor_x + w > self.width - HSTEP - SCROLLBAR_WIDTH:

@@ -1,5 +1,6 @@
 use eframe::egui;
 use eframe::egui::text::{LayoutJob, TextFormat};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::constants::{HSTEP, SCROLLBAR_WIDTH, VSTEP};
@@ -10,6 +11,24 @@ const REGULAR_FAMILY: &str = "browser-regular";
 const BOLD_FAMILY: &str = "browser-bold";
 const ITALIC_FAMILY: &str = "browser-italic";
 const BOLD_ITALIC_FAMILY: &str = "browser-bold-italic";
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct WordKey {
+    text: String,
+    style: StyleKey,
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct StyleKey {
+    size_bits: u32,
+    bold: bool,
+    italic: bool,
+}
+
+pub struct FontCache {
+    layouts: HashMap<WordKey, Arc<egui::Galley>>,
+    metrics: HashMap<StyleKey, FontMetrics>,
+}
 
 pub struct Layout {
     pub display_list: Vec<DisplayItem>,
@@ -24,7 +43,13 @@ pub struct Layout {
 }
 
 impl Layout {
-    pub fn new(tokens: &[Token], width: f32, rtl: bool, ctx: &egui::Context) -> Self {
+    pub fn new(
+        tokens: &[Token],
+        width: f32,
+        rtl: bool,
+        ctx: &egui::Context,
+        font_cache: &mut FontCache,
+    ) -> Self {
         let mut layout = Self {
             display_list: Vec::new(),
             width,
@@ -38,18 +63,18 @@ impl Layout {
         };
 
         for tok in tokens {
-            layout.token(tok, ctx);
+            layout.token(tok, ctx, font_cache);
         }
 
-        layout.flush(ctx);
+        layout.flush(ctx, font_cache);
         layout
     }
 
-    fn token(&mut self, tok: &Token, ctx: &egui::Context) {
+    fn token(&mut self, tok: &Token, ctx: &egui::Context, font_cache: &mut FontCache) {
         match tok {
             Token::Text(_) => {
                 for word in extract_text(std::slice::from_ref(tok)).split_whitespace() {
-                    self.word(word, ctx);
+                    self.word(word, ctx, font_cache);
                 }
             }
             Token::Tag(tag) => match tag.as_str() {
@@ -62,38 +87,38 @@ impl Layout {
                 "big" => self.size += 4.0,
                 "/big" => self.size -= 4.0,
                 "/p" => {
-                    self.newline(ctx);
+                    self.newline(ctx, font_cache);
                     self.cursor_y += VSTEP;
                 }
                 _ => {
                     let normalized = tag.trim().to_ascii_lowercase();
                     if matches!(normalized.as_str(), "br" | "br/" | "/div") {
-                        self.newline(ctx);
+                        self.newline(ctx, font_cache);
                     }
                 }
             },
         }
     }
 
-    fn word(&mut self, word: &str, ctx: &egui::Context) {
+    fn word(&mut self, word: &str, ctx: &egui::Context, font_cache: &mut FontCache) {
         let bold = self.weight == "bold";
         let italic = self.style == "italic";
-        let w = measure_text(ctx, word, bold, italic, self.size);
+        let w = font_cache.measure_text(ctx, word, bold, italic, self.size);
 
         if self.cursor_x + w > self.width - HSTEP - SCROLLBAR_WIDTH {
-            self.flush(ctx);
+            self.flush(ctx, font_cache);
         }
 
         self.line
             .push((self.cursor_x, word.to_string(), bold, italic, self.size));
-        self.cursor_x += measure_text(ctx, &format!("{word} "), bold, italic, self.size);
+        self.cursor_x += font_cache.measure_text(ctx, &format!("{word} "), bold, italic, self.size);
     }
 
-    fn newline(&mut self, ctx: &egui::Context) {
-        self.flush(ctx);
+    fn newline(&mut self, ctx: &egui::Context, font_cache: &mut FontCache) {
+        self.flush(ctx, font_cache);
     }
 
-    fn flush(&mut self, ctx: &egui::Context) {
+    fn flush(&mut self, ctx: &egui::Context, font_cache: &mut FontCache) {
         if self.line.is_empty() {
             return;
         }
@@ -101,7 +126,7 @@ impl Layout {
         let metrics: Vec<FontMetrics> = self
             .line
             .iter()
-            .map(|(_, _, bold, italic, size)| measure_metrics(ctx, *bold, *italic, *size))
+            .map(|(_, _, bold, italic, size)| font_cache.measure_metrics(ctx, *bold, *italic, *size))
             .collect();
         let max_ascent = metrics
             .iter()
@@ -109,13 +134,14 @@ impl Layout {
             .fold(0.0, f32::max);
         let baseline = self.cursor_y + 1.25 * max_ascent;
         let shift = if self.rtl {
-            (self.width - HSTEP - SCROLLBAR_WIDTH - self.measure_line(ctx)).max(HSTEP) - HSTEP
+            (self.width - HSTEP - SCROLLBAR_WIDTH - self.measure_line(ctx, font_cache)).max(HSTEP)
+                - HSTEP
         } else {
             0.0
         };
 
         for (x, word, bold, italic, size) in &self.line {
-            let y = baseline - measure_metrics(ctx, *bold, *italic, *size).ascent;
+            let y = baseline - font_cache.measure_metrics(ctx, *bold, *italic, *size).ascent;
             self.display_list
                 .push((x + shift, y, word.clone(), *bold, *italic, *size));
         }
@@ -129,43 +155,108 @@ impl Layout {
         self.line.clear();
     }
 
-    fn measure_line(&self, ctx: &egui::Context) -> f32 {
+    fn measure_line(&self, ctx: &egui::Context, font_cache: &mut FontCache) -> f32 {
         let (last_x, last_word, last_bold, last_italic, last_size) =
             self.line.last().unwrap();
-        last_x + measure_text(ctx, last_word, *last_bold, *last_italic, *last_size) - HSTEP
+        last_x + font_cache.measure_text(ctx, last_word, *last_bold, *last_italic, *last_size)
+            - HSTEP
     }
 }
 
+#[derive(Clone, Copy)]
 struct FontMetrics {
     ascent: f32,
     descent: f32,
 }
 
-pub fn layout_word(
+impl FontCache {
+    pub fn new() -> Self {
+        Self {
+            layouts: HashMap::new(),
+            metrics: HashMap::new(),
+        }
+    }
+
+    pub fn layout_word(
+        &mut self,
+        ctx: &egui::Context,
+        text: &str,
+        bold: bool,
+        italic: bool,
+        size: f32,
+    ) -> Arc<egui::Galley> {
+        let key = WordKey {
+            text: text.to_owned(),
+            style: StyleKey::new(size, bold, italic),
+        };
+        self.layouts
+            .entry(key)
+            .or_insert_with(|| build_layout_word(ctx, text, bold, italic, size))
+            .clone()
+    }
+
+    fn measure_text(
+        &mut self,
+        ctx: &egui::Context,
+        text: &str,
+        bold: bool,
+        italic: bool,
+        size: f32,
+    ) -> f32 {
+        self.layout_word(ctx, text, bold, italic, size).size().x
+    }
+
+    fn measure_metrics(
+        &mut self,
+        ctx: &egui::Context,
+        bold: bool,
+        italic: bool,
+        size: f32,
+    ) -> FontMetrics {
+        let key = StyleKey::new(size, bold, italic);
+        if let Some(metrics) = self.metrics.get(&key) {
+            return *metrics;
+        }
+
+        let height = self.layout_word(ctx, "Ag", bold, italic, size).size().y;
+        let metrics = FontMetrics {
+            ascent: height * 0.8,
+            descent: height * 0.2,
+        };
+        self.metrics.insert(key, metrics);
+        metrics
+    }
+}
+
+impl StyleKey {
+    fn new(size: f32, bold: bool, italic: bool) -> Self {
+        Self {
+            size_bits: size.to_bits(),
+            bold,
+            italic,
+        }
+    }
+}
+
+fn build_layout_word(
     ctx: &egui::Context,
     text: &str,
     bold: bool,
     italic: bool,
     size: f32,
-    color: egui::Color32,
-) -> std::sync::Arc<egui::Galley> {
+) -> Arc<egui::Galley> {
     let mut job = LayoutJob::default();
     let mut format = TextFormat {
         font_id: egui::FontId {
             size,
             family: font_family_for(bold, italic),
         },
-        color,
+        color: egui::Color32::PLACEHOLDER,
         ..Default::default()
     };
     format.italics = italic;
     job.append(text, 0.0, format);
-    let galley = ctx.fonts_mut(|fonts| fonts.layout_job(job));
-    if bold {
-        galley
-    } else {
-        galley
-    }
+    ctx.fonts_mut(|fonts| fonts.layout_job(job))
 }
 
 fn font_family_for(bold: bool, italic: bool) -> egui::FontFamily {
@@ -176,20 +267,4 @@ fn font_family_for(bold: bool, italic: bool) -> egui::FontFamily {
         (false, false) => REGULAR_FAMILY,
     };
     egui::FontFamily::Name(Arc::<str>::from(name))
-}
-
-fn measure_text(ctx: &egui::Context, text: &str, bold: bool, italic: bool, size: f32) -> f32 {
-    layout_word(ctx, text, bold, italic, size, egui::Color32::WHITE)
-        .size()
-        .x
-}
-
-fn measure_metrics(ctx: &egui::Context, bold: bool, italic: bool, size: f32) -> FontMetrics {
-    let height = layout_word(ctx, "Ag", bold, italic, size, egui::Color32::WHITE)
-        .size()
-        .y;
-    FontMetrics {
-        ascent: height * 0.8,
-        descent: height * 0.2,
-    }
 }

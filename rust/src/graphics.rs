@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use crate::constants::{EMOJI_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
 use crate::emoji::EmojiCache;
-use crate::layout::{layout_word, DisplayItem, Layout};
+use crate::layout::{DisplayItem, FontCache, Layout};
 use crate::network::{lex, Token, Url};
 
 static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
@@ -37,6 +37,7 @@ struct Browser {
     height: f32,
     rtl: bool,
     emoji_cache: EmojiCache,
+    font_cache: FontCache,
 }
 
 impl Browser {
@@ -49,6 +50,7 @@ impl Browser {
             height: HEIGHT,
             rtl,
             emoji_cache: EmojiCache::new(),
+            font_cache: FontCache::new(),
         };
 
         if let Some(url) = url {
@@ -83,7 +85,7 @@ impl Browser {
                     egui::Color32::WHITE,
                 );
             } else {
-                let galley = layout_word(&ctx, &token, bold, italic, size, color);
+                let galley = self.font_cache.layout_word(&ctx, &token, bold, italic, size);
                 let pos = egui::pos2(x, y - self.scroll);
                 painter.galley(pos, galley, color);
             }
@@ -100,7 +102,9 @@ impl Browser {
     }
 
     fn relayout(&mut self, ctx: &egui::Context) {
-        self.display_list = Layout::new(&self.tokens, self.width, self.rtl, ctx).display_list;
+        self.display_list =
+            Layout::new(&self.tokens, self.width, self.rtl, ctx, &mut self.font_cache)
+                .display_list;
         self.scroll = self.scroll.min(self.max_scroll());
     }
 
