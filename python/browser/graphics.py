@@ -9,7 +9,7 @@ from pathlib import Path
 
 import cairosvg
 
-from .network import URL, lex
+from .network import Tag, Text, URL, extract_text, lex
 
 WIDTH, HEIGHT = 800, 600
 HSTEP, VSTEP = 13, 18
@@ -22,12 +22,12 @@ FONT_SIZE = 16
 class Browser:
     def __init__(self, rtl=False):
         self.window = tk.Tk()
-        self.font = tkinter.font.Font(family=FONT_FAMILY, size=FONT_SIZE)
         self.width = WIDTH
         self.height = HEIGHT
-        self.text = ""
+        self.tokens = []
         self.display_list = []
         self.emoji_cache = {}
+        self.font_cache = {}
         self.rtl = rtl
         self.canvas = tk.Canvas(
             self.window,
@@ -73,7 +73,7 @@ class Browser:
         
     def draw(self):
         self.canvas.delete("all")
-        for x, y, token in self.display_list:
+        for x, y, token, font in self.display_list:
             if y > self.scroll + self.height: continue
             if y + VSTEP < self.scroll: continue
             emoji = self.load_emoji(token)
@@ -81,7 +81,7 @@ class Browser:
                 self.canvas.create_image(x, y - self.scroll, image=emoji, anchor="nw")
             else:
                 self.canvas.create_text(
-                    x, y - self.scroll, text=token, anchor="nw", font=self.font
+                    x, y - self.scroll, text=token, anchor="nw", font=font
                 )
         self.draw_scrollbar()
 
@@ -105,17 +105,17 @@ class Browser:
 
     def load(self, url):
         body = url.request()
-        self.text = lex(body)
-        self.display_list = layout(self.text, self.width, self.rtl, self.font)
+        self.tokens = lex(body)
+        self.display_list = layout(self.tokens, self.width, self.rtl, self.get_font)
         self.scroll = 0
         self.draw()
 
     def resize(self, e):
         self.width = e.width
         self.height = e.height
-        if not self.text:
+        if not self.tokens:
             return
-        self.display_list = layout(self.text, self.width, self.rtl, self.font)
+        self.display_list = layout(self.tokens, self.width, self.rtl, self.get_font)
         self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
 
@@ -143,52 +143,89 @@ class Browser:
             outline="light blue"
         )
 
-def layout(text, width, rtl=False, font=None):
-    if font is None:
-        font = tkinter.font.Font(family=FONT_FAMILY, size=FONT_SIZE)
+    def get_font(self, weight="normal", style="roman"):
+        key = (weight, style)
+        if key not in self.font_cache:
+            self.font_cache[key] = tkinter.font.Font(
+                family=FONT_FAMILY,
+                size=FONT_SIZE,
+                weight=weight,
+                slant=style,
+            )
+        return self.font_cache[key]
+
+def layout(tokens, width, rtl=False, get_font=None):
+    if get_font is None:
+        font_cache = {}
+
+        def get_font(weight="normal", style="roman"):
+            key = (weight, style)
+            if key not in font_cache:
+                font_cache[key] = tkinter.font.Font(
+                    family=FONT_FAMILY,
+                    size=FONT_SIZE,
+                    weight=weight,
+                    slant=style,
+                )
+            return font_cache[key]
+
     display_list = []
     cursor_y = VSTEP
     line = []
     cursor_x = HSTEP
-    line_height = int(font.metrics("linespace") * 1.25)
+    weight = "normal"
+    style = "roman"
 
-    for paragraph in text.split("\n"):
-        for word in paragraph.split():
-            w = font.measure(word)
+    for tok in tokens:
+        if isinstance(tok, Text):
+            for word in extract_text([tok]).split():
+                font = get_font(weight, style)
+                w = font.measure(word)
+                line_height = int(font.metrics("linespace") * 1.25)
 
-            if cursor_x + w > width - HSTEP - SCROLLBAR_WIDTH:
-                flush_line(display_list, line, cursor_y, width, rtl, font)
-                line = []
-                cursor_y += line_height
-                cursor_x = HSTEP
+                if cursor_x + w > width - HSTEP - SCROLLBAR_WIDTH:
+                    flush_line(display_list, line, cursor_y, width, rtl)
+                    line = []
+                    cursor_y += line_height
+                    cursor_x = HSTEP
 
-            line.append(word)
-            cursor_x += font.measure(word + " ")
+                line.append((word, font))
+                cursor_x += font.measure(word + " ")
+        elif tok.tag == "i":
+            style = "italic"
+        elif tok.tag == "/i":
+            style = "roman"
+        elif tok.tag == "b":
+            weight = "bold"
+        elif tok.tag == "/b":
+            weight = "normal"
+        elif tok.tag.strip().casefold() in ["br", "br/", "/div"]:
+            line_height = int(get_font(weight, style).metrics("linespace") * 1.25)
+            flush_line(display_list, line, cursor_y, width, rtl)
+            line = []
+            cursor_y += line_height
+            cursor_x = HSTEP
 
-        flush_line(display_list, line, cursor_y, width, rtl, font)
-        line = []
-        cursor_y += line_height
-        cursor_x = HSTEP
-
+    flush_line(display_list, line, cursor_y, width, rtl)
     return display_list
 
-def flush_line(display_list, line, cursor_y, width, rtl, font):
+def flush_line(display_list, line, cursor_y, width, rtl):
     if not line:
         return
 
-    line_width = measure_line(line, font)
+    line_width = measure_line(line)
     if rtl:
         cursor_x = max(HSTEP, width - HSTEP - SCROLLBAR_WIDTH - line_width)
     else:
         cursor_x = HSTEP
 
-    for word in line:
-        display_list.append((cursor_x, cursor_y, word))
+    for word, font in line:
+        display_list.append((cursor_x, cursor_y, word, font))
         cursor_x += font.measure(word + " ")
 
-def measure_line(line, font):
+def measure_line(line):
     width = 0
-    for i, word in enumerate(line):
+    for i, (word, font) in enumerate(line):
         width += font.measure(word)
         if i < len(line) - 1:
             width += font.measure(" ")

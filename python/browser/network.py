@@ -2,6 +2,7 @@ import gzip
 import socket
 import ssl
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -9,52 +10,81 @@ DEFAULT_FILE = Path(__file__).resolve().parent.parent / "test.html"
 MAX_REDIRECTS = 10
 
 
+@dataclass
+class Text:
+    text: str
+
+
+@dataclass
+class Tag:
+    text: str
+
+    @property
+    def tag(self):
+        return self.text
+
+
 def lex(body):
+    out = []
+    buffer = ""
     in_tag = False
-    tag = ""
-    entity = ""
-    in_entity = False
-    text = ""
-    in_whitespace = False
-
     for c in body:
-        if in_entity:
-            entity += c
-            if entity == "&lt;":
-                text += "<"
-                entity = ""
-                in_entity = False
-                in_whitespace = False
-            elif entity == "&gt;":
-                text += ">"
-                entity = ""
-                in_entity = False
-                in_whitespace = False
-            elif c == ";":
-                text += entity
-                entity = ""
-                in_entity = False
-                in_whitespace = False
-            continue
-
         if c == "<":
             in_tag = True
-            tag = ""
+            if buffer:
+                out.append(Text(buffer))
+            buffer = ""
         elif c == ">":
-            normalized_tag = tag.strip().casefold()
+            in_tag = False
+            out.append(Tag(buffer))
+            buffer = ""
+        else:
+            buffer += c
+
+    if not in_tag and buffer:
+        out.append(Text(buffer))
+    return out
+
+
+def extract_text(tokens):
+    text = ""
+    entity = ""
+    in_entity = False
+    in_whitespace = False
+
+    for token in tokens:
+        if isinstance(token, Tag):
+            normalized_tag = token.text.strip().casefold()
             if normalized_tag in ["br", "br/", "/div"]:
                 text = text.rstrip(" ")
                 text += "\n"
                 in_whitespace = False
-            in_tag = False
-            tag = ""
-        elif c == "&" and not in_tag:
-            entity = c
-            in_entity = True
-        elif in_tag:
-            tag += c
-        elif not in_tag:
-            if c.isspace():
+            continue
+
+        for c in token.text:
+            if in_entity:
+                entity += c
+                if entity == "&lt;":
+                    text += "<"
+                    entity = ""
+                    in_entity = False
+                    in_whitespace = False
+                elif entity == "&gt;":
+                    text += ">"
+                    entity = ""
+                    in_entity = False
+                    in_whitespace = False
+                elif c == ";":
+                    text += entity
+                    entity = ""
+                    in_entity = False
+                    in_whitespace = False
+                continue
+
+            if c == "&":
+                entity = c
+                in_entity = True
+            elif c.isspace():
                 if text and not in_whitespace:
                     text += " "
                 in_whitespace = True

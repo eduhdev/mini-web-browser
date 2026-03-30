@@ -12,6 +12,12 @@ use std::time::{Duration, Instant};
 pub const DEFAULT_FILE: &str = "test.html";
 const MAX_REDIRECTS: usize = 10;
 
+#[derive(Clone, Debug)]
+pub enum Token {
+    Text(String),
+    Tag(String),
+}
+
 thread_local! {
     static CONNECTIONS: RefCell<HashMap<String, Connection>> = RefCell::new(HashMap::new());
     static CACHE: RefCell<HashMap<String, CacheEntry>> = RefCell::new(HashMap::new());
@@ -21,62 +27,88 @@ pub fn fetch(url: &str) -> String {
     Url::new(url).request()
 }
 
-pub fn lex(body: &str) -> String {
+pub fn lex(body: &str) -> Vec<Token> {
+    let mut out = Vec::new();
+    let mut buffer = String::new();
     let mut in_tag = false;
-    let mut tag = String::new();
-    let mut entity = String::new();
-    let mut in_entity = false;
-    let mut text = String::new();
-    let mut in_whitespace = false;
 
     for c in body.chars() {
-        if in_entity {
-            entity.push(c);
-
-            if entity == "&lt;" {
-                text.push('<');
-                entity.clear();
-                in_entity = false;
-                in_whitespace = false;
-            } else if entity == "&gt;" {
-                text.push('>');
-                entity.clear();
-                in_entity = false;
-                in_whitespace = false;
-            } else if c == ';' {
-                text.push_str(&entity);
-                entity.clear();
-                in_entity = false;
-                in_whitespace = false;
-            }
-        } else if c == '<' {
+        if c == '<' {
             in_tag = true;
-            tag.clear();
-        } else if c == '>' {
-            let normalized_tag = tag.trim().to_ascii_lowercase();
-            if matches!(normalized_tag.as_str(), "br" | "br/" | "/div") {
-                while text.ends_with(' ') {
-                    text.pop();
-                }
-                text.push('\n');
-                in_whitespace = false;
+            if !buffer.is_empty() {
+                out.push(Token::Text(buffer.clone()));
             }
+            buffer.clear();
+        } else if c == '>' {
             in_tag = false;
-            tag.clear();
-        } else if c == '&' && !in_tag {
-            entity.push(c);
-            in_entity = true;
-        } else if in_tag {
-            tag.push(c);
-        } else if !in_tag {
-            if c.is_whitespace() {
-                if !text.is_empty() && !in_whitespace {
-                    text.push(' ');
+            out.push(Token::Tag(buffer.clone()));
+            buffer.clear();
+        } else {
+            buffer.push(c);
+        }
+    }
+
+    if !in_tag && !buffer.is_empty() {
+        out.push(Token::Text(buffer));
+    }
+    out
+}
+
+pub fn extract_text(tokens: &[Token]) -> String {
+    let mut text = String::new();
+    let mut entity = String::new();
+    let mut in_entity = false;
+    let mut in_whitespace = false;
+
+    for token in tokens {
+        match token {
+            Token::Tag(tag) => {
+                let normalized = tag.trim().to_ascii_lowercase();
+                if matches!(normalized.as_str(), "br" | "br/" | "/div") {
+                    while text.ends_with(' ') {
+                        text.pop();
+                    }
+                    text.push('\n');
+                    in_whitespace = false;
                 }
-                in_whitespace = true;
-            } else {
-                text.push(c);
-                in_whitespace = false;
+            }
+            Token::Text(body) => {
+                for c in body.chars() {
+                    if in_entity {
+                        entity.push(c);
+
+                        if entity == "&lt;" {
+                            text.push('<');
+                            entity.clear();
+                            in_entity = false;
+                            in_whitespace = false;
+                        } else if entity == "&gt;" {
+                            text.push('>');
+                            entity.clear();
+                            in_entity = false;
+                            in_whitespace = false;
+                        } else if c == ';' {
+                            text.push_str(&entity);
+                            entity.clear();
+                            in_entity = false;
+                            in_whitespace = false;
+                        }
+                        continue;
+                    }
+
+                    if c == '&' {
+                        entity.push(c);
+                        in_entity = true;
+                    } else if c.is_whitespace() {
+                        if !text.is_empty() && !in_whitespace {
+                            text.push(' ');
+                        }
+                        in_whitespace = true;
+                    } else {
+                        text.push(c);
+                        in_whitespace = false;
+                    }
+                }
             }
         }
     }

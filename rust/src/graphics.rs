@@ -1,4 +1,5 @@
 use eframe::egui;
+use eframe::egui::text::{LayoutJob, TextFormat};
 use resvg::{tiny_skia::Transform, usvg};
 use signal_hook::consts::signal::{SIGINT, SIGTSTP};
 use signal_hook::flag;
@@ -9,9 +10,7 @@ use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use tiny_skia::Pixmap;
-use unicode_segmentation::UnicodeSegmentation;
-
-use crate::network::{lex, Url};
+use crate::network::{extract_text, lex, Token, Url};
 
 const WIDTH: f32 = 800.0;
 const HEIGHT: f32 = 600.0;
@@ -20,6 +19,7 @@ const VSTEP: f32 = 18.0;
 const SCROLL_STEP: f32 = 100.0;
 const SCROLLBAR_WIDTH: f32 = 8.0;
 const EMOJI_SIZE: u32 = 18;
+const FONT_SIZE: f32 = 16.0;
 static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 static OPENMOJI_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -47,8 +47,8 @@ pub fn run(url: Option<String>, rtl: bool) -> eframe::Result<()> {
 }
 
 struct Browser {
-    text: String,
-    display_list: Vec<(f32, f32, String)>,
+    tokens: Vec<Token>,
+    display_list: Vec<(f32, f32, String, bool, bool)>,
     scroll: f32,
     width: f32,
     height: f32,
@@ -59,7 +59,7 @@ struct Browser {
 impl Browser {
     fn new(url: Option<String>, rtl: bool) -> Self {
         let mut browser = Self {
-            text: String::new(),
+            tokens: Vec::new(),
             display_list: Vec::new(),
             scroll: 0.0,
             width: WIDTH,
@@ -77,11 +77,10 @@ impl Browser {
 
     fn draw(&mut self, ui: &mut egui::Ui) {
         let painter = ui.painter();
-        let font_id = egui::FontId::proportional(16.0);
         let color = ui.visuals().text_color();
         let ctx = ui.ctx().clone();
 
-        for (x, y, token) in self.display_list.clone() {
+        for (x, y, token, bold, italic) in self.display_list.clone() {
             if y > self.scroll + self.height {
                 continue;
             }
@@ -101,13 +100,12 @@ impl Browser {
                     egui::Color32::WHITE,
                 );
             } else {
-                painter.text(
-                    egui::pos2(x, y - self.scroll),
-                    egui::Align2::LEFT_TOP,
-                    token,
-                    font_id.clone(),
-                    color,
-                );
+                let galley = layout_word(&ctx, &token, bold, italic, color);
+                let pos = egui::pos2(x, y - self.scroll);
+                painter.galley(pos, galley.clone(), color);
+                if bold {
+                    painter.galley(egui::pos2(pos.x + 1.0, pos.y), galley, color);
+                }
             }
         }
 
@@ -116,13 +114,13 @@ impl Browser {
 
     fn load(&mut self, url: Url) {
         let body = url.request();
-        self.text = lex(&body);
+        self.tokens = lex(&body);
         self.display_list.clear();
         self.scroll = 0.0;
     }
 
     fn relayout(&mut self, ctx: &egui::Context) {
-        self.display_list = layout(&self.text, self.width, self.rtl, ctx);
+        self.display_list = layout(&self.tokens, self.width, self.rtl, ctx);
         self.scroll = self.scroll.min(self.max_scroll());
     }
 
@@ -147,7 +145,7 @@ impl Browser {
     fn document_height(&self) -> f32 {
         self.display_list
             .last()
-            .map(|(_, y, _)| *y + VSTEP)
+            .map(|(_, y, _, _, _)| *y + VSTEP)
             .unwrap_or(self.height)
     }
 
@@ -181,12 +179,12 @@ impl eframe::App for Browser {
         if new_size.x != self.width || new_size.y != self.height {
             self.width = new_size.x;
             self.height = new_size.y;
-            if !self.text.is_empty() {
+            if !self.tokens.is_empty() {
                 self.relayout(ctx);
             }
         }
 
-        if self.display_list.is_empty() && !self.text.is_empty() {
+        if self.display_list.is_empty() && !self.tokens.is_empty() {
             self.relayout(ctx);
         }
 
@@ -210,80 +208,119 @@ impl eframe::App for Browser {
     }
 }
 
-fn layout(text: &str, width: f32, rtl: bool, ctx: &egui::Context) -> Vec<(f32, f32, String)> {
+fn layout(tokens: &[Token], width: f32, rtl: bool, ctx: &egui::Context) -> Vec<(f32, f32, String, bool, bool)> {
     let mut display_list = Vec::new();
     let mut cursor_y = VSTEP;
-    let mut line: Vec<String> = Vec::new();
+    let mut line: Vec<(String, bool, bool)> = Vec::new();
     let mut cursor_x = HSTEP;
-    let font_id = egui::FontId::proportional(16.0);
-    let line_height = ctx.fonts_mut(|fonts| fonts.row_height(&font_id)) * 1.25;
+    let line_height = FONT_SIZE * 1.25;
+    let mut weight = "normal";
+    let mut style = "roman";
 
-    for paragraph in text.split('\n') {
-        for word in paragraph.split_whitespace() {
-            let w = measure_text(ctx, word, &font_id);
+    for tok in tokens {
+        match tok {
+            Token::Text(_) => {
+                for word in extract_text(std::slice::from_ref(tok)).split_whitespace() {
+                    let bold = weight == "bold";
+                    let italic = style == "italic";
+                    let w = measure_text(ctx, word, bold, italic);
 
-            if cursor_x + w > width - HSTEP - SCROLLBAR_WIDTH {
-                flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx, &font_id);
-                line.clear();
-                cursor_y += line_height;
-                cursor_x = HSTEP;
+                    if cursor_x + w > width - HSTEP - SCROLLBAR_WIDTH {
+                        flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx);
+                        line.clear();
+                        cursor_y += line_height;
+                        cursor_x = HSTEP;
+                    }
+
+                    line.push((word.to_string(), bold, italic));
+                    cursor_x += measure_text(ctx, &format!("{word} "), bold, italic);
+                }
             }
-
-            line.push(word.to_string());
-            cursor_x += measure_text(ctx, &format!("{word} "), &font_id);
+            Token::Tag(tag) => {
+                match tag.as_str() {
+                    "i" => style = "italic",
+                    "/i" => style = "roman",
+                    "b" => weight = "bold",
+                    "/b" => weight = "normal",
+                    _ => {
+                        let normalized = tag.trim().to_ascii_lowercase();
+                        if matches!(normalized.as_str(), "br" | "br/" | "/div") {
+                            flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx);
+                            line.clear();
+                            cursor_y += line_height;
+                            cursor_x = HSTEP;
+                        }
+                    }
+                }
+            }
         }
-
-        flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx, &font_id);
-        line.clear();
-        cursor_y += line_height;
-        cursor_x = HSTEP;
     }
+    flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx);
     display_list
 }
 
 fn flush_line(
-    display_list: &mut Vec<(f32, f32, String)>,
-    line: &[String],
+    display_list: &mut Vec<(f32, f32, String, bool, bool)>,
+    line: &[(String, bool, bool)],
     cursor_y: f32,
     width: f32,
     rtl: bool,
     ctx: &egui::Context,
-    font_id: &egui::FontId,
 ) {
     if line.is_empty() {
         return;
     }
 
     let mut cursor_x = if rtl {
-        (width - HSTEP - SCROLLBAR_WIDTH - measure_line(ctx, line, font_id)).max(HSTEP)
+        (width - HSTEP - SCROLLBAR_WIDTH - measure_line(ctx, line)).max(HSTEP)
     } else {
         HSTEP
     };
 
-    for word in line {
-        display_list.push((cursor_x, cursor_y, word.clone()));
-        cursor_x += measure_text(ctx, &format!("{word} "), font_id);
+    for (word, bold, italic) in line {
+        display_list.push((cursor_x, cursor_y, word.clone(), *bold, *italic));
+        cursor_x += measure_text(ctx, &format!("{word} "), *bold, *italic);
     }
 }
 
-fn measure_line(ctx: &egui::Context, line: &[String], font_id: &egui::FontId) -> f32 {
+fn measure_line(ctx: &egui::Context, line: &[(String, bool, bool)]) -> f32 {
     let mut width = 0.0;
-    for (i, word) in line.iter().enumerate() {
-        width += measure_text(ctx, word, font_id);
+    for (i, (word, bold, italic)) in line.iter().enumerate() {
+        width += measure_text(ctx, word, *bold, *italic);
         if i < line.len() - 1 {
-            width += measure_text(ctx, " ", font_id);
+            width += measure_text(ctx, " ", *bold, *italic);
         }
     }
     width
 }
 
-fn measure_text(ctx: &egui::Context, text: &str, font_id: &egui::FontId) -> f32 {
-    ctx.fonts_mut(|fonts| {
-        fonts
-            .layout_no_wrap(text.to_string(), font_id.clone(), egui::Color32::WHITE)
-            .size()
-            .x
-    })
+fn measure_text(ctx: &egui::Context, text: &str, bold: bool, italic: bool) -> f32 {
+    layout_word(ctx, text, bold, italic, egui::Color32::WHITE)
+        .size()
+        .x
+}
+
+fn layout_word(
+    ctx: &egui::Context,
+    text: &str,
+    bold: bool,
+    italic: bool,
+    color: egui::Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = LayoutJob::default();
+    let mut format = TextFormat {
+        font_id: egui::FontId::proportional(FONT_SIZE),
+        color,
+        ..Default::default()
+    };
+    format.italics = italic;
+    job.append(text, 0.0, format);
+    let galley = ctx.fonts_mut(|fonts| fonts.layout_job(job));
+    if bold {
+        galley
+    } else {
+        galley
+    }
 }
 
 fn install_system_font(ctx: &egui::Context) {
@@ -319,21 +356,6 @@ fn install_system_font(ctx: &egui::Context) {
     monospace.push("apple-color-emoji".to_owned());
 
     ctx.set_fonts(fonts);
-}
-
-fn tokenize(text: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-
-    for grapheme in text.graphemes(true) {
-        if grapheme == "\n" {
-            tokens.push("\n".to_owned());
-            continue;
-        }
-
-        tokens.push(grapheme.to_owned());
-    }
-
-    tokens
 }
 
 fn load_emoji_texture(ctx: &egui::Context, token: &str) -> Option<egui::TextureHandle> {
