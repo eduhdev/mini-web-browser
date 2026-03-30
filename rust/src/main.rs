@@ -1,4 +1,7 @@
+mod constants;
+mod emoji;
 mod graphics;
+mod layout;
 mod network;
 
 fn main() -> eframe::Result<()> {

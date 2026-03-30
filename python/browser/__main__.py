@@ -1,5 +1,5 @@
-from .graphics import launch
+from .graphics import main
 
 
 if __name__ == "__main__":
-    launch()
+    main()

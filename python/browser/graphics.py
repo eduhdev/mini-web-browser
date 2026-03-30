@@ -1,23 +1,11 @@
 import tkinter as tk
-from tkinter import ttk
 import tkinter.font
 import argparse
-import base64
 import signal
-import sys
-from pathlib import Path
-
-import cairosvg
-
-from .network import Tag, Text, URL, extract_text, lex
-
-WIDTH, HEIGHT = 800, 600
-HSTEP, VSTEP = 13, 18
-SCROLL_STEP = 100
-SCROLLBAR_WIDTH = 8
-EMOJI_DIR = Path(__file__).resolve().parents[2] / "openmoji"
-FONT_FAMILY = ".AppleSystemUIFont"
-FONT_SIZE = 16
+from .constants import FONT_FAMILY, FONT_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
+from .emoji import EmojiCache
+from .layout import Layout
+from .network import URL, lex
 
 class Browser:
     def __init__(self, rtl=False):
@@ -26,7 +14,7 @@ class Browser:
         self.height = HEIGHT
         self.tokens = []
         self.display_list = []
-        self.emoji_cache = {}
+        self.emoji_cache = EmojiCache()
         self.font_cache = {}
         self.rtl = rtl
         self.canvas = tk.Canvas(
@@ -76,7 +64,7 @@ class Browser:
         for x, y, token, font in self.display_list:
             if y > self.scroll + self.height: continue
             if y + VSTEP < self.scroll: continue
-            emoji = self.load_emoji(token)
+            emoji = self.emoji_cache.load(token)
             if emoji is not None:
                 self.canvas.create_image(x, y - self.scroll, image=emoji, anchor="nw")
             else:
@@ -85,28 +73,12 @@ class Browser:
                 )
         self.draw_scrollbar()
 
-    def load_emoji(self, token):
-        if token in self.emoji_cache:
-            return self.emoji_cache[token]
-
-        emoji_path = emoji_path_for(token)
-        if emoji_path is None:
-            self.emoji_cache[token] = None
-            return None
-
-        png = cairosvg.svg2png(
-            url=str(emoji_path),
-            output_width=VSTEP,
-            output_height=VSTEP,
-        )
-        image = tk.PhotoImage(data=base64.b64encode(png).decode("ascii"))
-        self.emoji_cache[token] = image
-        return image
-
     def load(self, url):
         body = url.request()
         self.tokens = lex(body)
-        self.display_list = layout(self.tokens, self.width, self.rtl, self.get_font)
+        self.display_list = Layout(
+            self.tokens, self.width, self.rtl, self.get_font
+        ).display_list
         self.scroll = 0
         self.draw()
 
@@ -115,7 +87,9 @@ class Browser:
         self.height = e.height
         if not self.tokens:
             return
-        self.display_list = layout(self.tokens, self.width, self.rtl, self.get_font)
+        self.display_list = Layout(
+            self.tokens, self.width, self.rtl, self.get_font
+        ).display_list
         self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
 
@@ -143,103 +117,16 @@ class Browser:
             outline="light blue"
         )
 
-    def get_font(self, weight="normal", style="roman"):
-        key = (weight, style)
+    def get_font(self, weight="normal", style="roman", size=12):
+        key = (weight, style, size)
         if key not in self.font_cache:
             self.font_cache[key] = tkinter.font.Font(
                 family=FONT_FAMILY,
-                size=FONT_SIZE,
+                size=size,
                 weight=weight,
                 slant=style,
             )
         return self.font_cache[key]
-
-def layout(tokens, width, rtl=False, get_font=None):
-    if get_font is None:
-        font_cache = {}
-
-        def get_font(weight="normal", style="roman"):
-            key = (weight, style)
-            if key not in font_cache:
-                font_cache[key] = tkinter.font.Font(
-                    family=FONT_FAMILY,
-                    size=FONT_SIZE,
-                    weight=weight,
-                    slant=style,
-                )
-            return font_cache[key]
-
-    display_list = []
-    cursor_y = VSTEP
-    line = []
-    cursor_x = HSTEP
-    weight = "normal"
-    style = "roman"
-
-    for tok in tokens:
-        if isinstance(tok, Text):
-            for word in extract_text([tok]).split():
-                font = get_font(weight, style)
-                w = font.measure(word)
-                line_height = int(font.metrics("linespace") * 1.25)
-
-                if cursor_x + w > width - HSTEP - SCROLLBAR_WIDTH:
-                    flush_line(display_list, line, cursor_y, width, rtl)
-                    line = []
-                    cursor_y += line_height
-                    cursor_x = HSTEP
-
-                line.append((word, font))
-                cursor_x += font.measure(word + " ")
-        elif tok.tag == "i":
-            style = "italic"
-        elif tok.tag == "/i":
-            style = "roman"
-        elif tok.tag == "b":
-            weight = "bold"
-        elif tok.tag == "/b":
-            weight = "normal"
-        elif tok.tag.strip().casefold() in ["br", "br/", "/div"]:
-            line_height = int(get_font(weight, style).metrics("linespace") * 1.25)
-            flush_line(display_list, line, cursor_y, width, rtl)
-            line = []
-            cursor_y += line_height
-            cursor_x = HSTEP
-
-    flush_line(display_list, line, cursor_y, width, rtl)
-    return display_list
-
-def flush_line(display_list, line, cursor_y, width, rtl):
-    if not line:
-        return
-
-    line_width = measure_line(line)
-    if rtl:
-        cursor_x = max(HSTEP, width - HSTEP - SCROLLBAR_WIDTH - line_width)
-    else:
-        cursor_x = HSTEP
-
-    for word, font in line:
-        display_list.append((cursor_x, cursor_y, word, font))
-        cursor_x += font.measure(word + " ")
-
-def measure_line(line):
-    width = 0
-    for i, (word, font) in enumerate(line):
-        width += font.measure(word)
-        if i < len(line) - 1:
-            width += font.measure(" ")
-    return width
-
-def emoji_path_for(token):
-    if not token or token == "\n":
-        return None
-
-    codepoints = "-".join(f"{ord(char):X}" for char in token)
-    emoji_path = EMOJI_DIR / f"{codepoints}.svg"
-    if emoji_path.exists():
-        return emoji_path
-    return None
 
 def launch(url=None, rtl=False):
     browser = Browser(rtl=rtl)

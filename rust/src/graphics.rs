@@ -1,32 +1,15 @@
 use eframe::egui;
-use eframe::egui::text::{LayoutJob, TextFormat};
-use resvg::{tiny_skia::Transform, usvg};
 use signal_hook::consts::signal::{SIGINT, SIGTSTP};
 use signal_hook::flag;
-use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
-use tiny_skia::Pixmap;
-use crate::network::{extract_text, lex, Token, Url};
+use crate::constants::{EMOJI_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
+use crate::emoji::EmojiCache;
+use crate::layout::{layout_word, DisplayItem, Layout};
+use crate::network::{lex, Token, Url};
 
-const WIDTH: f32 = 800.0;
-const HEIGHT: f32 = 600.0;
-const HSTEP: f32 = 13.0;
-const VSTEP: f32 = 18.0;
-const SCROLL_STEP: f32 = 100.0;
-const SCROLLBAR_WIDTH: f32 = 8.0;
-const EMOJI_SIZE: u32 = 18;
-const FONT_SIZE: f32 = 16.0;
 static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
-static OPENMOJI_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("openmoji")
-});
 
 pub fn run(url: Option<String>, rtl: bool) -> eframe::Result<()> {
     let _ = flag::register(SIGINT, INTERRUPTED.clone());
@@ -48,12 +31,12 @@ pub fn run(url: Option<String>, rtl: bool) -> eframe::Result<()> {
 
 struct Browser {
     tokens: Vec<Token>,
-    display_list: Vec<(f32, f32, String, bool, bool)>,
+    display_list: Vec<DisplayItem>,
     scroll: f32,
     width: f32,
     height: f32,
     rtl: bool,
-    emoji_cache: HashMap<String, egui::TextureHandle>,
+    emoji_cache: EmojiCache,
 }
 
 impl Browser {
@@ -65,7 +48,7 @@ impl Browser {
             width: WIDTH,
             height: HEIGHT,
             rtl,
-            emoji_cache: HashMap::new(),
+            emoji_cache: EmojiCache::new(),
         };
 
         if let Some(url) = url {
@@ -88,7 +71,7 @@ impl Browser {
                 continue;
             }
 
-            if let Some(texture) = self.load_emoji(&ctx, &token) {
+            if let Some(texture) = self.emoji_cache.load(&ctx, &token) {
                 let rect = egui::Rect::from_min_size(
                     egui::pos2(x, y - self.scroll),
                     egui::vec2(EMOJI_SIZE as f32, EMOJI_SIZE as f32),
@@ -120,7 +103,7 @@ impl Browser {
     }
 
     fn relayout(&mut self, ctx: &egui::Context) {
-        self.display_list = layout(&self.tokens, self.width, self.rtl, ctx);
+        self.display_list = Layout::new(&self.tokens, self.width, self.rtl, ctx).display_list;
         self.scroll = self.scroll.min(self.max_scroll());
     }
 
@@ -130,16 +113,6 @@ impl Browser {
             return;
         }
         self.scroll = new_scroll;
-    }
-
-    fn load_emoji(&mut self, ctx: &egui::Context, token: &str) -> Option<egui::TextureHandle> {
-        if self.emoji_cache.contains_key(token) {
-            return self.emoji_cache.get(token).cloned();
-        }
-
-        let texture = load_emoji_texture(ctx, token)?;
-        self.emoji_cache.insert(token.to_owned(), texture);
-        self.emoji_cache.get(token).cloned()
     }
 
     fn document_height(&self) -> f32 {
@@ -208,130 +181,16 @@ impl eframe::App for Browser {
     }
 }
 
-fn layout(tokens: &[Token], width: f32, rtl: bool, ctx: &egui::Context) -> Vec<(f32, f32, String, bool, bool)> {
-    let mut display_list = Vec::new();
-    let mut cursor_y = VSTEP;
-    let mut line: Vec<(String, bool, bool)> = Vec::new();
-    let mut cursor_x = HSTEP;
-    let line_height = FONT_SIZE * 1.25;
-    let mut weight = "normal";
-    let mut style = "roman";
-
-    for tok in tokens {
-        match tok {
-            Token::Text(_) => {
-                for word in extract_text(std::slice::from_ref(tok)).split_whitespace() {
-                    let bold = weight == "bold";
-                    let italic = style == "italic";
-                    let w = measure_text(ctx, word, bold, italic);
-
-                    if cursor_x + w > width - HSTEP - SCROLLBAR_WIDTH {
-                        flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx);
-                        line.clear();
-                        cursor_y += line_height;
-                        cursor_x = HSTEP;
-                    }
-
-                    line.push((word.to_string(), bold, italic));
-                    cursor_x += measure_text(ctx, &format!("{word} "), bold, italic);
-                }
-            }
-            Token::Tag(tag) => {
-                match tag.as_str() {
-                    "i" => style = "italic",
-                    "/i" => style = "roman",
-                    "b" => weight = "bold",
-                    "/b" => weight = "normal",
-                    _ => {
-                        let normalized = tag.trim().to_ascii_lowercase();
-                        if matches!(normalized.as_str(), "br" | "br/" | "/div") {
-                            flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx);
-                            line.clear();
-                            cursor_y += line_height;
-                            cursor_x = HSTEP;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx);
-    display_list
-}
-
-fn flush_line(
-    display_list: &mut Vec<(f32, f32, String, bool, bool)>,
-    line: &[(String, bool, bool)],
-    cursor_y: f32,
-    width: f32,
-    rtl: bool,
-    ctx: &egui::Context,
-) {
-    if line.is_empty() {
-        return;
-    }
-
-    let mut cursor_x = if rtl {
-        (width - HSTEP - SCROLLBAR_WIDTH - measure_line(ctx, line)).max(HSTEP)
-    } else {
-        HSTEP
-    };
-
-    for (word, bold, italic) in line {
-        display_list.push((cursor_x, cursor_y, word.clone(), *bold, *italic));
-        cursor_x += measure_text(ctx, &format!("{word} "), *bold, *italic);
-    }
-}
-
-fn measure_line(ctx: &egui::Context, line: &[(String, bool, bool)]) -> f32 {
-    let mut width = 0.0;
-    for (i, (word, bold, italic)) in line.iter().enumerate() {
-        width += measure_text(ctx, word, *bold, *italic);
-        if i < line.len() - 1 {
-            width += measure_text(ctx, " ", *bold, *italic);
-        }
-    }
-    width
-}
-
-fn measure_text(ctx: &egui::Context, text: &str, bold: bool, italic: bool) -> f32 {
-    layout_word(ctx, text, bold, italic, egui::Color32::WHITE)
-        .size()
-        .x
-}
-
-fn layout_word(
-    ctx: &egui::Context,
-    text: &str,
-    bold: bool,
-    italic: bool,
-    color: egui::Color32,
-) -> std::sync::Arc<egui::Galley> {
-    let mut job = LayoutJob::default();
-    let mut format = TextFormat {
-        font_id: egui::FontId::proportional(FONT_SIZE),
-        color,
-        ..Default::default()
-    };
-    format.italics = italic;
-    job.append(text, 0.0, format);
-    let galley = ctx.fonts_mut(|fonts| fonts.layout_job(job));
-    if bold {
-        galley
-    } else {
-        galley
-    }
-}
-
 fn install_system_font(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
     for (name, path) in system_font_candidates() {
-        if !Path::new(path).exists() {
+        let path = std::path::Path::new(path);
+        if !path.exists() {
             continue;
         }
 
-        let Ok(bytes) = fs::read(path) else {
+        let Ok(bytes) = std::fs::read(path) else {
             continue;
         };
 
@@ -356,48 +215,6 @@ fn install_system_font(ctx: &egui::Context) {
     monospace.push("apple-color-emoji".to_owned());
 
     ctx.set_fonts(fonts);
-}
-
-fn load_emoji_texture(ctx: &egui::Context, token: &str) -> Option<egui::TextureHandle> {
-    let path = emoji_path_for(token)?;
-    let svg = fs::read(&path).ok()?;
-    let options = usvg::Options::default();
-    let tree = usvg::Tree::from_data(&svg, &options).ok()?;
-    let mut pixmap = Pixmap::new(EMOJI_SIZE, EMOJI_SIZE)?;
-    let size = tree.size();
-    let scale = (EMOJI_SIZE as f32 / size.width()).min(EMOJI_SIZE as f32 / size.height());
-    let scaled_width = size.width() * scale;
-    let scaled_height = size.height() * scale;
-    let dx = (EMOJI_SIZE as f32 - scaled_width) / 2.0;
-    let dy = (EMOJI_SIZE as f32 - scaled_height) / 2.0;
-    let transform = Transform::from_scale(scale, scale).post_translate(dx, dy);
-
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
-
-    let image = egui::ColorImage::from_rgba_unmultiplied(
-        [EMOJI_SIZE as usize, EMOJI_SIZE as usize],
-        pixmap.data(),
-    );
-
-    Some(ctx.load_texture(
-        format!("emoji-{token}"),
-        image,
-        egui::TextureOptions::LINEAR,
-    ))
-}
-
-fn emoji_path_for(token: &str) -> Option<PathBuf> {
-    if token == "\n" || token.is_empty() {
-        return None;
-    }
-
-    let codepoints = token
-        .chars()
-        .map(|c| format!("{:X}", c as u32))
-        .collect::<Vec<_>>()
-        .join("-");
-    let path = OPENMOJI_DIR.join(format!("{codepoints}.svg"));
-    path.exists().then_some(path)
 }
 
 fn system_font_candidates() -> &'static [(&'static str, &'static str)] {
