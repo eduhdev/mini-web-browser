@@ -17,15 +17,36 @@ The book primarily builds the browser in Python, and this repository follows tha
 - `rust/`
   Rust implementation
 
-Inside each implementation, the code is now split into separate graphics and network layers so UI work can continue independently from fetching and parsing.
+Inside each implementation, the code is split into separate network, layout, graphics, and emoji/font helpers so rendering work can evolve independently from fetching and parsing.
+
+Current Python modules:
+
+- `python/browser/network.py`
+  URL handling, HTTP/file/data/about loading, redirects, caching, compression, and HTML token extraction
+- `python/browser/layout.py`
+  text layout and tag-driven styling
+- `python/browser/graphics.py`
+  Tk window, drawing, scrolling, resizing, and input handling
+- `python/browser/fonts.py`
+  shared font caching
+- `python/browser/emoji.py`
+  emoji asset loading from the root `openmoji/` folder
+
+Current Rust modules:
+
+- `rust/src/network.rs`
+- `rust/src/layout.rs`
+- `rust/src/graphics.rs`
+- `rust/src/emoji.rs`
+- `rust/src/constants.rs`
 
 ## Current Status
 
-The project currently contains a small text-based browser prototype in both languages.
+The project currently contains a small browser prototype in both languages, with a text-mode CLI and a graphical text renderer.
 
 Implemented so far in the network layer:
 
-- `http`, `https`, `file`, `data`, and `view-source` URL support
+- `http`, `https`, `file`, `data`, `view-source`, and `about:blank` URL support
 - HTTP/1.1 requests with reusable request headers
 - `Host`, `Connection`, `User-Agent`, and `Accept-Encoding` headers
 - keep-alive connection reuse
@@ -33,10 +54,24 @@ Implemented so far in the network layer:
 - basic response caching with `Cache-Control: no-store` and `max-age`
 - gzip-compressed response support
 - chunked transfer decoding
-- simple HTML text extraction
+- HTML lexing into text/tag tokens
 - support for `&lt;` and `&gt;` entities
 
-The project also now includes a minimal standalone graphics shell in both Python and Rust. The GUI is intentionally not connected to the network layer yet.
+Implemented so far in the graphics/layout layer:
+
+- word-based layout with measured text widths
+- scrolling, resizing, and a proportional scrollbar
+- basic tag handling for:
+  - `<b>`
+  - `<i>`
+  - `<small>`
+  - `<big>`
+  - `<br>`
+  - `</div>`
+  - `</p>`
+- optional `--rtl` layout mode
+- emoji rendering from the root `openmoji/` folder
+- font caching on Python and cached styled text layouts on Rust
 
 This is still intentionally minimal. It does not yet implement full HTML parsing, layout, CSS, or JavaScript.
 
@@ -54,7 +89,15 @@ python3 python/index.py 'view-source:https://example.org'
 Python GUI:
 
 ```bash
-python3 python/gui.py
+./run-python-gui.sh
+./run-python-gui.sh "https://browser.engineering/text.html"
+./run-python-gui.sh --rtl "data:text/html,<div><b>Hello</b> <i>world</i></div>"
+```
+
+Python GUI profiling:
+
+```bash
+./run-python-gui.sh --profile "https://browser.engineering/text.html"
 ```
 
 Rust GUI:
@@ -62,6 +105,8 @@ Rust GUI:
 ```bash
 cd rust
 cargo run
+cargo run -- "https://browser.engineering/text.html"
+cargo run -- --rtl "data:text/html,<div><b>Hello</b> <i>world</i></div>"
 ```
 
 ## Test Files
