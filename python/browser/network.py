@@ -11,9 +11,11 @@ MAX_REDIRECTS = 10
 
 def lex(body):
     in_tag = False
+    tag = ""
     entity = ""
     in_entity = False
     text = ""
+    in_whitespace = False
 
     for c in body:
         if in_entity:
@@ -22,27 +24,45 @@ def lex(body):
                 text += "<"
                 entity = ""
                 in_entity = False
+                in_whitespace = False
             elif entity == "&gt;":
                 text += ">"
                 entity = ""
                 in_entity = False
+                in_whitespace = False
             elif c == ";":
                 text += entity
                 entity = ""
                 in_entity = False
+                in_whitespace = False
             continue
 
         if c == "<":
             in_tag = True
+            tag = ""
         elif c == ">":
+            normalized_tag = tag.strip().casefold()
+            if normalized_tag in ["br", "br/", "/div"]:
+                text = text.rstrip(" ")
+                text += "\n"
+                in_whitespace = False
             in_tag = False
+            tag = ""
         elif c == "&" and not in_tag:
             entity = c
             in_entity = True
+        elif in_tag:
+            tag += c
         elif not in_tag:
-            text += c
+            if c.isspace():
+                if text and not in_whitespace:
+                    text += " "
+                in_whitespace = True
+            else:
+                text += c
+                in_whitespace = False
 
-    return text
+    return text.strip()
 
 
 def fetch(url):

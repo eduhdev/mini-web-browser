@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+import tkinter.font
 import argparse
 import base64
 import signal
@@ -15,10 +16,13 @@ HSTEP, VSTEP = 13, 18
 SCROLL_STEP = 100
 SCROLLBAR_WIDTH = 8
 EMOJI_DIR = Path(__file__).resolve().parents[2] / "openmoji"
+FONT_FAMILY = ".AppleSystemUIFont"
+FONT_SIZE = 16
 
 class Browser:
     def __init__(self, rtl=False):
         self.window = tk.Tk()
+        self.font = tkinter.font.Font(family=FONT_FAMILY, size=FONT_SIZE)
         self.width = WIDTH
         self.height = HEIGHT
         self.text = ""
@@ -76,7 +80,9 @@ class Browser:
             if emoji is not None:
                 self.canvas.create_image(x, y - self.scroll, image=emoji, anchor="nw")
             else:
-                self.canvas.create_text(x, y - self.scroll, text=token, anchor="nw")
+                self.canvas.create_text(
+                    x, y - self.scroll, text=token, anchor="nw", font=self.font
+                )
         self.draw_scrollbar()
 
     def load_emoji(self, token):
@@ -100,7 +106,7 @@ class Browser:
     def load(self, url):
         body = url.request()
         self.text = lex(body)
-        self.display_list = layout(self.text, self.width, self.rtl)
+        self.display_list = layout(self.text, self.width, self.rtl, self.font)
         self.scroll = 0
         self.draw()
 
@@ -109,7 +115,7 @@ class Browser:
         self.height = e.height
         if not self.text:
             return
-        self.display_list = layout(self.text, self.width, self.rtl)
+        self.display_list = layout(self.text, self.width, self.rtl, self.font)
         self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
 
@@ -137,70 +143,56 @@ class Browser:
             outline="light blue"
         )
 
-def layout(text, width, rtl=False):
+def layout(text, width, rtl=False, font=None):
+    if font is None:
+        font = tkinter.font.Font(family=FONT_FAMILY, size=FONT_SIZE)
     display_list = []
     cursor_y = VSTEP
     line = []
-    max_columns = max(1, int((width - SCROLLBAR_WIDTH) // HSTEP) - 1)
+    cursor_x = HSTEP
+    line_height = int(font.metrics("linespace") * 1.25)
 
-    for token in tokenize(text):
-        if token == "\n":
-            flush_line(display_list, line, cursor_y, width, rtl)
-            line = []
-            cursor_y += VSTEP + VSTEP // 2
-            continue
+    for paragraph in text.split("\n"):
+        for word in paragraph.split():
+            w = font.measure(word)
 
-        line.append(token)
-        if len(line) >= max_columns:
-            flush_line(display_list, line, cursor_y, width, rtl)
-            line = []
-            cursor_y += VSTEP
+            if cursor_x + w > width - HSTEP - SCROLLBAR_WIDTH:
+                flush_line(display_list, line, cursor_y, width, rtl, font)
+                line = []
+                cursor_y += line_height
+                cursor_x = HSTEP
 
-    flush_line(display_list, line, cursor_y, width, rtl)
+            line.append(word)
+            cursor_x += font.measure(word + " ")
+
+        flush_line(display_list, line, cursor_y, width, rtl, font)
+        line = []
+        cursor_y += line_height
+        cursor_x = HSTEP
+
     return display_list
 
-def flush_line(display_list, line, cursor_y, width, rtl):
+def flush_line(display_list, line, cursor_y, width, rtl, font):
     if not line:
         return
 
+    line_width = measure_line(line, font)
     if rtl:
-        right_edge = width - HSTEP - SCROLLBAR_WIDTH
-        cursor_x = max(HSTEP, right_edge - HSTEP * (len(line) - 1))
+        cursor_x = max(HSTEP, width - HSTEP - SCROLLBAR_WIDTH - line_width)
     else:
         cursor_x = HSTEP
 
-    for token in line:
-        display_list.append((cursor_x, cursor_y, token))
-        cursor_x += HSTEP
+    for word in line:
+        display_list.append((cursor_x, cursor_y, word))
+        cursor_x += font.measure(word + " ")
 
-def tokenize(text):
-    tokens = []
-    i = 0
-    while i < len(text):
-        if text[i] == "\n":
-            tokens.append("\n")
-            i += 1
-            continue
-
-        emoji = longest_emoji_at(text, i)
-        if emoji is not None:
-            tokens.append(emoji)
-            i += len(emoji)
-            continue
-
-        tokens.append(text[i])
-        i += 1
-
-    return tokens
-
-def longest_emoji_at(text, start):
-    end = len(text)
-    while end > start:
-        candidate = text[start:end]
-        if emoji_path_for(candidate) is not None:
-            return candidate
-        end -= 1
-    return None
+def measure_line(line, font):
+    width = 0
+    for i, word in enumerate(line):
+        width += font.measure(word)
+        if i < len(line) - 1:
+            width += font.measure(" ")
+    return width
 
 def emoji_path_for(token):
     if not token or token == "\n":

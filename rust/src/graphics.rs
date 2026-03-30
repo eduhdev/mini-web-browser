@@ -117,8 +117,13 @@ impl Browser {
     fn load(&mut self, url: Url) {
         let body = url.request();
         self.text = lex(&body);
-        self.display_list = layout(&self.text, self.width, self.rtl);
+        self.display_list.clear();
         self.scroll = 0.0;
+    }
+
+    fn relayout(&mut self, ctx: &egui::Context) {
+        self.display_list = layout(&self.text, self.width, self.rtl, ctx);
+        self.scroll = self.scroll.min(self.max_scroll());
     }
 
     fn scrollby(&mut self, amount: f32) {
@@ -177,9 +182,12 @@ impl eframe::App for Browser {
             self.width = new_size.x;
             self.height = new_size.y;
             if !self.text.is_empty() {
-                self.display_list = layout(&self.text, self.width, self.rtl);
-                self.scroll = self.scroll.min(self.max_scroll());
+                self.relayout(ctx);
             }
+        }
+
+        if self.display_list.is_empty() && !self.text.is_empty() {
+            self.relayout(ctx);
         }
 
         ctx.input(|input| {
@@ -202,29 +210,34 @@ impl eframe::App for Browser {
     }
 }
 
-fn layout(text: &str, width: f32, rtl: bool) -> Vec<(f32, f32, String)> {
+fn layout(text: &str, width: f32, rtl: bool, ctx: &egui::Context) -> Vec<(f32, f32, String)> {
     let mut display_list = Vec::new();
     let mut cursor_y = VSTEP;
-    let mut line = Vec::new();
-    let max_columns = (((width - SCROLLBAR_WIDTH) / HSTEP) as i32 - 1).max(1) as usize;
+    let mut line: Vec<String> = Vec::new();
+    let mut cursor_x = HSTEP;
+    let font_id = egui::FontId::proportional(16.0);
+    let line_height = ctx.fonts_mut(|fonts| fonts.row_height(&font_id)) * 1.25;
 
-    for token in tokenize(text) {
-        if token == "\n" {
-            flush_line(&mut display_list, &line, cursor_y, width, rtl);
-            line.clear();
-            cursor_y += 1.5 * VSTEP;
-            continue;
+    for paragraph in text.split('\n') {
+        for word in paragraph.split_whitespace() {
+            let w = measure_text(ctx, word, &font_id);
+
+            if cursor_x + w > width - HSTEP - SCROLLBAR_WIDTH {
+                flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx, &font_id);
+                line.clear();
+                cursor_y += line_height;
+                cursor_x = HSTEP;
+            }
+
+            line.push(word.to_string());
+            cursor_x += measure_text(ctx, &format!("{word} "), &font_id);
         }
 
-        line.push(token);
-        if line.len() >= max_columns {
-            flush_line(&mut display_list, &line, cursor_y, width, rtl);
-            line.clear();
-            cursor_y += VSTEP;
-        }
+        flush_line(&mut display_list, &line, cursor_y, width, rtl, ctx, &font_id);
+        line.clear();
+        cursor_y += line_height;
+        cursor_x = HSTEP;
     }
-
-    flush_line(&mut display_list, &line, cursor_y, width, rtl);
     display_list
 }
 
@@ -234,22 +247,43 @@ fn flush_line(
     cursor_y: f32,
     width: f32,
     rtl: bool,
+    ctx: &egui::Context,
+    font_id: &egui::FontId,
 ) {
     if line.is_empty() {
         return;
     }
 
     let mut cursor_x = if rtl {
-        let right_edge = width - HSTEP - SCROLLBAR_WIDTH;
-        (right_edge - HSTEP * (line.len().saturating_sub(1) as f32)).max(HSTEP)
+        (width - HSTEP - SCROLLBAR_WIDTH - measure_line(ctx, line, font_id)).max(HSTEP)
     } else {
         HSTEP
     };
 
-    for token in line {
-        display_list.push((cursor_x, cursor_y, token.clone()));
-        cursor_x += HSTEP;
+    for word in line {
+        display_list.push((cursor_x, cursor_y, word.clone()));
+        cursor_x += measure_text(ctx, &format!("{word} "), font_id);
     }
+}
+
+fn measure_line(ctx: &egui::Context, line: &[String], font_id: &egui::FontId) -> f32 {
+    let mut width = 0.0;
+    for (i, word) in line.iter().enumerate() {
+        width += measure_text(ctx, word, font_id);
+        if i < line.len() - 1 {
+            width += measure_text(ctx, " ", font_id);
+        }
+    }
+    width
+}
+
+fn measure_text(ctx: &egui::Context, text: &str, font_id: &egui::FontId) -> f32 {
+    ctx.fonts_mut(|fonts| {
+        fonts
+            .layout_no_wrap(text.to_string(), font_id.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+    })
 }
 
 fn install_system_font(ctx: &egui::Context) {

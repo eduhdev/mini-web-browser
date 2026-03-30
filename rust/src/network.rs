@@ -23,9 +23,11 @@ pub fn fetch(url: &str) -> String {
 
 pub fn lex(body: &str) -> String {
     let mut in_tag = false;
+    let mut tag = String::new();
     let mut entity = String::new();
     let mut in_entity = false;
     let mut text = String::new();
+    let mut in_whitespace = false;
 
     for c in body.chars() {
         if in_entity {
@@ -35,28 +37,51 @@ pub fn lex(body: &str) -> String {
                 text.push('<');
                 entity.clear();
                 in_entity = false;
+                in_whitespace = false;
             } else if entity == "&gt;" {
                 text.push('>');
                 entity.clear();
                 in_entity = false;
+                in_whitespace = false;
             } else if c == ';' {
                 text.push_str(&entity);
                 entity.clear();
                 in_entity = false;
+                in_whitespace = false;
             }
         } else if c == '<' {
             in_tag = true;
+            tag.clear();
         } else if c == '>' {
+            let normalized_tag = tag.trim().to_ascii_lowercase();
+            if matches!(normalized_tag.as_str(), "br" | "br/" | "/div") {
+                while text.ends_with(' ') {
+                    text.pop();
+                }
+                text.push('\n');
+                in_whitespace = false;
+            }
             in_tag = false;
+            tag.clear();
         } else if c == '&' && !in_tag {
             entity.push(c);
             in_entity = true;
+        } else if in_tag {
+            tag.push(c);
         } else if !in_tag {
-            text.push(c);
+            if c.is_whitespace() {
+                if !text.is_empty() && !in_whitespace {
+                    text.push(' ');
+                }
+                in_whitespace = true;
+            } else {
+                text.push(c);
+                in_whitespace = false;
+            }
         }
     }
 
-    text
+    text.trim().to_string()
 }
 
 pub struct Url {
