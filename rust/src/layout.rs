@@ -1,10 +1,15 @@
 use eframe::egui;
 use eframe::egui::text::{LayoutJob, TextFormat};
+use std::sync::Arc;
 
 use crate::constants::{HSTEP, SCROLLBAR_WIDTH, VSTEP};
 use crate::network::{extract_text, Token};
 
 pub type DisplayItem = (f32, f32, String, bool, bool, f32);
+const REGULAR_FAMILY: &str = "browser-regular";
+const BOLD_FAMILY: &str = "browser-bold";
+const ITALIC_FAMILY: &str = "browser-italic";
+const BOLD_ITALIC_FAMILY: &str = "browser-bold-italic";
 
 pub struct Layout {
     pub display_list: Vec<DisplayItem>,
@@ -15,7 +20,7 @@ pub struct Layout {
     weight: &'static str,
     style: &'static str,
     size: f32,
-    line: Vec<(String, bool, bool, f32)>,
+    line: Vec<(f32, String, bool, bool, f32)>,
 }
 
 impl Layout {
@@ -56,6 +61,10 @@ impl Layout {
                 "/small" => self.size += 2.0,
                 "big" => self.size += 4.0,
                 "/big" => self.size -= 4.0,
+                "/p" => {
+                    self.newline(ctx);
+                    self.cursor_y += VSTEP;
+                }
                 _ => {
                     let normalized = tag.trim().to_ascii_lowercase();
                     if matches!(normalized.as_str(), "br" | "br/" | "/div") {
@@ -73,18 +82,15 @@ impl Layout {
 
         if self.cursor_x + w > self.width - HSTEP - SCROLLBAR_WIDTH {
             self.flush(ctx);
-            self.cursor_y += self.line_height();
-            self.cursor_x = HSTEP;
         }
 
-        self.line.push((word.to_string(), bold, italic, self.size));
+        self.line
+            .push((self.cursor_x, word.to_string(), bold, italic, self.size));
         self.cursor_x += measure_text(ctx, &format!("{word} "), bold, italic, self.size);
     }
 
     fn newline(&mut self, ctx: &egui::Context) {
         self.flush(ctx);
-        self.cursor_y += self.line_height();
-        self.cursor_x = HSTEP;
     }
 
     fn flush(&mut self, ctx: &egui::Context) {
@@ -92,35 +98,47 @@ impl Layout {
             return;
         }
 
-        let mut cursor_x = if self.rtl {
-            (self.width - HSTEP - SCROLLBAR_WIDTH - self.measure_line(ctx)).max(HSTEP)
+        let metrics: Vec<FontMetrics> = self
+            .line
+            .iter()
+            .map(|(_, _, bold, italic, size)| measure_metrics(ctx, *bold, *italic, *size))
+            .collect();
+        let max_ascent = metrics
+            .iter()
+            .map(|metric| metric.ascent)
+            .fold(0.0, f32::max);
+        let baseline = self.cursor_y + 1.25 * max_ascent;
+        let shift = if self.rtl {
+            (self.width - HSTEP - SCROLLBAR_WIDTH - self.measure_line(ctx)).max(HSTEP) - HSTEP
         } else {
-            HSTEP
+            0.0
         };
 
-        for (word, bold, italic, size) in &self.line {
+        for (x, word, bold, italic, size) in &self.line {
+            let y = baseline - measure_metrics(ctx, *bold, *italic, *size).ascent;
             self.display_list
-                .push((cursor_x, self.cursor_y, word.clone(), *bold, *italic, *size));
-            cursor_x += measure_text(ctx, &format!("{word} "), *bold, *italic, *size);
+                .push((x + shift, y, word.clone(), *bold, *italic, *size));
         }
 
+        let max_descent = metrics
+            .iter()
+            .map(|metric| metric.descent)
+            .fold(0.0, f32::max);
+        self.cursor_y = baseline + 1.25 * max_descent;
+        self.cursor_x = HSTEP;
         self.line.clear();
     }
 
     fn measure_line(&self, ctx: &egui::Context) -> f32 {
-        let mut width = 0.0;
-        for (i, (word, bold, italic, size)) in self.line.iter().enumerate() {
-            width += measure_text(ctx, word, *bold, *italic, *size);
-            if i < self.line.len() - 1 {
-                width += measure_text(ctx, " ", *bold, *italic, *size);
-            }
-        }
-        width
+        let (last_x, last_word, last_bold, last_italic, last_size) =
+            self.line.last().unwrap();
+        last_x + measure_text(ctx, last_word, *last_bold, *last_italic, *last_size) - HSTEP
     }
+}
 
-    fn line_height(&self) -> f32 {
-        self.size * 1.25
-    }
+struct FontMetrics {
+    ascent: f32,
+    descent: f32,
 }
 
 pub fn layout_word(
@@ -133,7 +151,10 @@ pub fn layout_word(
 ) -> std::sync::Arc<egui::Galley> {
     let mut job = LayoutJob::default();
     let mut format = TextFormat {
-        font_id: egui::FontId::proportional(size),
+        font_id: egui::FontId {
+            size,
+            family: font_family_for(bold, italic),
+        },
         color,
         ..Default::default()
     };
@@ -147,8 +168,28 @@ pub fn layout_word(
     }
 }
 
+fn font_family_for(bold: bool, italic: bool) -> egui::FontFamily {
+    let name = match (bold, italic) {
+        (true, true) => BOLD_ITALIC_FAMILY,
+        (true, false) => BOLD_FAMILY,
+        (false, true) => ITALIC_FAMILY,
+        (false, false) => REGULAR_FAMILY,
+    };
+    egui::FontFamily::Name(Arc::<str>::from(name))
+}
+
 fn measure_text(ctx: &egui::Context, text: &str, bold: bool, italic: bool, size: f32) -> f32 {
     layout_word(ctx, text, bold, italic, size, egui::Color32::WHITE)
         .size()
         .x
+}
+
+fn measure_metrics(ctx: &egui::Context, bold: bool, italic: bool, size: f32) -> FontMetrics {
+    let height = layout_word(ctx, "Ag", bold, italic, size, egui::Color32::WHITE)
+        .size()
+        .y;
+    FontMetrics {
+        ascent: height * 0.8,
+        descent: height * 0.2,
+    }
 }

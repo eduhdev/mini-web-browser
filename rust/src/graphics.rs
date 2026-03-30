@@ -85,10 +85,7 @@ impl Browser {
             } else {
                 let galley = layout_word(&ctx, &token, bold, italic, size, color);
                 let pos = egui::pos2(x, y - self.scroll);
-                painter.galley(pos, galley.clone(), color);
-                if bold {
-                    painter.galley(egui::pos2(pos.x + 1.0, pos.y), galley, color);
-                }
+                painter.galley(pos, galley, color);
             }
         }
 
@@ -184,47 +181,96 @@ impl eframe::App for Browser {
 fn install_system_font(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
-    for (name, path) in system_font_candidates() {
-        let path = std::path::Path::new(path);
-        if !path.exists() {
-            continue;
-        }
+    load_font_data(
+        &mut fonts,
+        "browser-regular",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    );
+    load_font_data(
+        &mut fonts,
+        "browser-bold",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    );
+    load_font_data(
+        &mut fonts,
+        "browser-italic",
+        "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
+    );
+    load_font_data(
+        &mut fonts,
+        "browser-bold-italic",
+        "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
+    );
+    load_font_data(
+        &mut fonts,
+        "browser-unicode",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    );
+    load_font_data(
+        &mut fonts,
+        "apple-color-emoji",
+        "/System/Library/Fonts/Apple Color Emoji.ttc",
+    );
 
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
-
-        fonts.font_data.insert(
-            (*name).to_owned(),
-            egui::FontData::from_owned(bytes).into(),
-        );
-    }
+    set_family(
+        &mut fonts,
+        "browser-regular",
+        &["browser-regular", "browser-unicode", "apple-color-emoji"],
+    );
+    set_family(
+        &mut fonts,
+        "browser-bold",
+        &["browser-bold", "browser-unicode", "apple-color-emoji"],
+    );
+    set_family(
+        &mut fonts,
+        "browser-italic",
+        &["browser-italic", "browser-unicode", "apple-color-emoji"],
+    );
+    set_family(
+        &mut fonts,
+        "browser-bold-italic",
+        &["browser-bold-italic", "browser-unicode", "apple-color-emoji"],
+    );
 
     let proportional = fonts
         .families
         .entry(egui::FontFamily::Proportional)
         .or_default();
-    proportional.insert(0, "system-ui".to_owned());
+    proportional.insert(0, "browser-regular".to_owned());
+    proportional.push("browser-unicode".to_owned());
     proportional.push("apple-color-emoji".to_owned());
 
     let monospace = fonts
         .families
         .entry(egui::FontFamily::Monospace)
         .or_default();
-    monospace.push("system-ui".to_owned());
+    monospace.push("browser-regular".to_owned());
+    monospace.push("browser-unicode".to_owned());
     monospace.push("apple-color-emoji".to_owned());
 
     ctx.set_fonts(fonts);
 }
 
-fn system_font_candidates() -> &'static [(&'static str, &'static str)] {
-    &[
-        ("system-ui", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
-        ("apple-color-emoji", "/System/Library/Fonts/Apple Color Emoji.ttc"),
-        ("system-ui", "/System/Library/Fonts/Supplemental/AppleGothic.ttf"),
-        ("system-ui", "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
-        ("system-ui", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-        ("system-ui", "C:\\Windows\\Fonts\\arialuni.ttf"),
-        ("system-ui", "C:\\Windows\\Fonts\\msgothic.ttc"),
-    ]
+fn load_font_data(fonts: &mut egui::FontDefinitions, name: &str, path: &str) {
+    let path = std::path::Path::new(path);
+    if !path.exists() {
+        return;
+    }
+
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+
+    fonts.font_data.insert(
+        name.to_owned(),
+        egui::FontData::from_owned(bytes).into(),
+    );
+}
+
+fn set_family(fonts: &mut egui::FontDefinitions, family_name: &str, fonts_in_family: &[&str]) {
+    fonts.families.insert(
+        egui::FontFamily::Name(std::sync::Arc::<str>::from(family_name)),
+        fonts_in_family.iter().map(|name| (*name).to_owned()).collect(),
+    );
 }

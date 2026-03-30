@@ -58,6 +58,9 @@ class Layout:
             self.size -= 4
         elif tok.tag.strip().casefold() in ["br", "br/", "/div"]:
             self.newline()
+        elif tok.tag == "/p":
+            self.newline()
+            self.cursor_y += VSTEP
 
     def word(self, word):
         font = self.get_font(self.weight, self.style, self.size)
@@ -65,42 +68,35 @@ class Layout:
 
         if self.cursor_x + w > self.width - HSTEP - SCROLLBAR_WIDTH:
             self.flush()
-            self.cursor_y += self.line_height()
-            self.cursor_x = HSTEP
 
-        self.line.append((word, font))
+        self.line.append((self.cursor_x, word, font))
         self.cursor_x += font.measure(word + " ")
 
     def newline(self):
         self.flush()
-        self.cursor_y += self.line_height()
-        self.cursor_x = HSTEP
 
     def flush(self):
         if not self.line:
             return
 
+        metrics = [font.metrics() for x, word, font in self.line]
+        max_ascent = max([metric["ascent"] for metric in metrics])
+        baseline = self.cursor_y + 1.25 * max_ascent
         line_width = self.measure_line()
         if self.rtl:
-            cursor_x = max(HSTEP, self.width - HSTEP - SCROLLBAR_WIDTH - line_width)
+            shift = max(HSTEP, self.width - HSTEP - SCROLLBAR_WIDTH - line_width) - HSTEP
         else:
-            cursor_x = HSTEP
+            shift = 0
 
-        for word, font in self.line:
-            self.display_list.append((cursor_x, self.cursor_y, word, font))
-            cursor_x += font.measure(word + " ")
+        for x, word, font in self.line:
+            y = baseline - font.metrics("ascent")
+            self.display_list.append((x + shift, y, word, font))
 
+        max_descent = max([metric["descent"] for metric in metrics])
+        self.cursor_y = baseline + 1.25 * max_descent
+        self.cursor_x = HSTEP
         self.line = []
 
     def measure_line(self):
-        width = 0
-        for i, (word, font) in enumerate(self.line):
-            width += font.measure(word)
-            if i < len(self.line) - 1:
-                width += font.measure(" ")
-        return width
-
-    def line_height(self):
-        return int(
-            self.get_font(self.weight, self.style, self.size).metrics("linespace") * 1.25
-        )
+        last_x, last_word, last_font = self.line[-1]
+        return last_x + last_font.measure(last_word) - HSTEP
