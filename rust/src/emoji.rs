@@ -69,6 +69,15 @@ fn emoji_path_for(token: &str) -> Option<PathBuf> {
     if token == "\n" || token.is_empty() {
         return None;
     }
+    if token.chars().count() > 16 {
+        return None;
+    }
+    if token.chars().any(|char| {
+        char.is_ascii()
+            && (char.is_ascii_alphanumeric() || "{}:;,#.-_/()[]'\" ".contains(char))
+    }) {
+        return None;
+    }
 
     let codepoints = token
         .chars()

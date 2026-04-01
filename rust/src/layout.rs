@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::constants::{HSTEP, SCROLLBAR_WIDTH, VSTEP};
-use crate::network::{extract_text, Token};
+use crate::network::{extract_text, Node, Text};
 
 pub type DisplayItem = (f32, f32, String, bool, bool, f32);
 const REGULAR_FAMILY: &str = "browser-regular";
@@ -45,7 +45,7 @@ pub struct Layout {
 
 impl Layout {
     pub fn new(
-        tokens: &[Token],
+        tree: &Node,
         width: f32,
         rtl: bool,
         ctx: &egui::Context,
@@ -63,41 +63,57 @@ impl Layout {
             line: Vec::new(),
         };
 
-        for tok in tokens {
-            layout.token(tok, ctx, font_cache);
-        }
+        layout.recurse(tree, ctx, font_cache);
 
         layout.flush(ctx, font_cache);
         layout
     }
 
-    fn token(&mut self, tok: &Token, ctx: &egui::Context, font_cache: &mut FontCache) {
-        match tok {
-            Token::Text(_) => {
-                for word in extract_text(std::slice::from_ref(tok)).split_whitespace() {
+    fn open_tag(&mut self, tag: &str) {
+        match tag {
+            "i" => self.style = "italic",
+            "b" => self.weight = "bold",
+            "small" => self.size -= 2.0,
+            "big" => self.size += 4.0,
+            _ => {}
+        }
+    }
+
+    fn close_tag(&mut self, tag: &str, ctx: &egui::Context, font_cache: &mut FontCache) {
+        match tag {
+            "i" => self.style = "roman",
+            "b" => self.weight = "normal",
+            "small" => self.size += 2.0,
+            "big" => self.size -= 4.0,
+            "div" => self.newline(ctx, font_cache),
+            "p" => {
+                self.newline(ctx, font_cache);
+                self.cursor_y += VSTEP;
+            }
+            _ => {}
+        }
+    }
+
+    fn recurse(&mut self, tree: &Node, ctx: &egui::Context, font_cache: &mut FontCache) {
+        match tree {
+            Node::Text(Text { .. }) => {
+                for word in extract_text(tree).split_whitespace() {
                     self.word(word, ctx, font_cache);
                 }
             }
-            Token::Tag(tag) => match tag.as_str() {
-                "i" => self.style = "italic",
-                "/i" => self.style = "roman",
-                "b" => self.weight = "bold",
-                "/b" => self.weight = "normal",
-                "small" => self.size -= 2.0,
-                "/small" => self.size += 2.0,
-                "big" => self.size += 4.0,
-                "/big" => self.size -= 4.0,
-                "/p" => {
+            Node::Element(element) => {
+                let normalized = element.tag.trim().to_ascii_lowercase();
+                if matches!(normalized.as_str(), "br" | "br/") {
                     self.newline(ctx, font_cache);
-                    self.cursor_y += VSTEP;
+                    return;
                 }
-                _ => {
-                    let normalized = tag.trim().to_ascii_lowercase();
-                    if matches!(normalized.as_str(), "br" | "br/" | "/div") {
-                        self.newline(ctx, font_cache);
-                    }
+
+                self.open_tag(&element.tag);
+                for child in &element.children {
+                    self.recurse(child, ctx, font_cache);
                 }
-            },
+                self.close_tag(&element.tag, ctx, font_cache);
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-from .network import URL, fetch, lex
+from .network import URL, fetch, HTMLParser
 
 
 def launch_gui(*args, **kwargs):
@@ -6,4 +6,4 @@ def launch_gui(*args, **kwargs):
     return launch(*args, **kwargs)
 
 
-__all__ = ["URL", "fetch", "launch_gui", "lex"]
+__all__ = ["URL", "fetch", "launch_gui", "HTMLParser"]

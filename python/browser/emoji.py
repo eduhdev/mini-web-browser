@@ -9,6 +9,10 @@ from .constants import EMOJI_DIR, VSTEP
 def emoji_path_for(token):
     if not token or token == "\n":
         return None
+    if len(token) > 16:
+        return None
+    if any(ord(char) < 0x80 and (char.isalnum() or char in "{}:;,#.-_/()[]'\" ") for char in token):
+        return None
 
     codepoints = "-".join(f"{ord(char):X}" for char in token)
     emoji_path = EMOJI_DIR / f"{codepoints}.svg"

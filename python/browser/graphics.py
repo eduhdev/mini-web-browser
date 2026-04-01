@@ -5,14 +5,14 @@ from .constants import HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
 from .emoji import EmojiCache
 from .fonts import get_font
 from .layout import Layout
-from .network import DEFAULT_FILE, URL, lex
+from .network import DEFAULT_FILE, HTMLParser, URL
 
 class Browser:
     def __init__(self, rtl=False):
         self.window = tk.Tk()
         self.width = WIDTH
         self.height = HEIGHT
-        self.tokens = []
+        self.nodes = None
         self.display_list = []
         self.emoji_cache = EmojiCache()
         self.rtl = rtl
@@ -74,17 +74,18 @@ class Browser:
 
     def load(self, url):
         body = url.request()
-        self.tokens = lex(body)
-        self.display_list = Layout(self.tokens, self.width, self.rtl, get_font).display_list
+        self.body = body
+        self.nodes = HTMLParser(body).parse()
+        self.display_list = Layout(self.nodes, self.width, self.rtl, get_font).display_list
         self.scroll = 0
         self.draw()
 
     def resize(self, e):
         self.width = e.width
         self.height = e.height
-        if not self.tokens:
+        if not self.nodes:
             return
-        self.display_list = Layout(self.tokens, self.width, self.rtl, get_font).display_list
+        self.display_list = Layout(self.nodes, self.width, self.rtl, get_font).display_list
         self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
 

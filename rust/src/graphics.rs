@@ -7,7 +7,7 @@ use std::sync::{Arc, LazyLock};
 use crate::constants::{EMOJI_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
 use crate::emoji::EmojiCache;
 use crate::layout::{DisplayItem, FontCache, Layout};
-use crate::network::{default_file_url, lex, Token, Url};
+use crate::network::{default_file_url, HtmlParser, Node, Url};
 
 static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
@@ -30,7 +30,7 @@ pub fn run(url: Option<String>, rtl: bool) -> eframe::Result<()> {
 }
 
 struct Browser {
-    tokens: Vec<Token>,
+    nodes: Option<Node>,
     display_list: Vec<DisplayItem>,
     scroll: f32,
     width: f32,
@@ -43,7 +43,7 @@ struct Browser {
 impl Browser {
     fn new(url: Option<String>, rtl: bool) -> Self {
         let mut browser = Self {
-            tokens: Vec::new(),
+            nodes: None,
             display_list: Vec::new(),
             scroll: 0.0,
             width: WIDTH,
@@ -95,15 +95,17 @@ impl Browser {
 
     fn load(&mut self, url: Url) {
         let body = url.request();
-        self.tokens = lex(&body);
+        self.nodes = Some(HtmlParser::new(&body).parse());
         self.display_list.clear();
         self.scroll = 0.0;
     }
 
     fn relayout(&mut self, ctx: &egui::Context) {
+        let Some(nodes) = &self.nodes else {
+            return;
+        };
         self.display_list =
-            Layout::new(&self.tokens, self.width, self.rtl, ctx, &mut self.font_cache)
-                .display_list;
+            Layout::new(nodes, self.width, self.rtl, ctx, &mut self.font_cache).display_list;
         self.scroll = self.scroll.min(self.max_scroll());
     }
 
@@ -152,12 +154,12 @@ impl eframe::App for Browser {
         if new_size.x != self.width || new_size.y != self.height {
             self.width = new_size.x;
             self.height = new_size.y;
-            if !self.tokens.is_empty() {
+            if self.nodes.is_some() {
                 self.relayout(ctx);
             }
         }
 
-        if self.display_list.is_empty() && !self.tokens.is_empty() {
+        if self.display_list.is_empty() && self.nodes.is_some() {
             self.relayout(ctx);
         }
 

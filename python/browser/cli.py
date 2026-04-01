@@ -1,6 +1,6 @@
 import sys
 
-from .network import DEFAULT_FILE, URL, extract_text, lex
+from .network import DEFAULT_FILE, URL, extract_text, HTMLParser
 
 
 def main():
@@ -14,7 +14,7 @@ def main():
     if url.view_source:
         print(body, end="")
     else:
-        print(extract_text(lex(body)), end="")
+        print(extract_text(HTMLParser(body).parse()), end="")
     print()
 
 

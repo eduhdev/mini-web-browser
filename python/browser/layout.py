@@ -4,7 +4,7 @@ from .network import Text, extract_text
 
 
 class Layout:
-    def __init__(self, tokens, width, rtl=False, font_getter=None):
+    def __init__(self, tree, width, rtl=False, font_getter=None):
         if font_getter is None:
             font_getter = get_font
         self.display_list = []
@@ -18,36 +18,45 @@ class Layout:
         self.size = 12
         self.line = []
 
-        for tok in tokens:
-            self.token(tok)
-
+        self.recurse(tree)
         self.flush()
-
-    def token(self, tok):
-        if isinstance(tok, Text):
-            for word in extract_text([tok]).split():
-                self.word(word)
-        elif tok.tag == "i":
+    
+    def open_tag(self, tag):
+        if tag == "i":
             self.style = "italic"
-        elif tok.tag == "/i":
-            self.style = "roman"
-        elif tok.tag == "b":
+        elif tag == "b":
             self.weight = "bold"
-        elif tok.tag == "/b":
-            self.weight = "normal"
-        elif tok.tag == "small":
+        elif tag == "small":
             self.size -= 2
-        elif tok.tag == "/small":
-            self.size += 2
-        elif tok.tag == "big":
+        elif tag == "big":
             self.size += 4
-        elif tok.tag == "/big":
+
+    def close_tag(self, tag):
+        if tag == "i":
+            self.style = "roman"
+        elif tag == "b":
+            self.weight = "normal"
+        elif tag == "small":
+            self.size += 2
+        elif tag == "big":
             self.size -= 4
-        elif tok.tag.strip().casefold() in ["br", "br/", "/div"]:
+        elif tag == "div":
             self.newline()
-        elif tok.tag == "/p":
+        elif tag == "p":
             self.newline()
             self.cursor_y += VSTEP
+
+    def recurse(self, tree):
+        if isinstance(tree, Text):
+            for word in extract_text([tree]).split():
+                self.word(word)
+        elif tree.tag.strip().casefold() in ["br", "br/", "/div"]:
+            self.newline()
+        else:
+            self.open_tag(tree.tag)
+            for child in tree.children:
+                self.recurse(child)
+            self.close_tag(tree.tag)
 
     def word(self, word):
         font = self.get_font(self.size, self.weight, self.style)
