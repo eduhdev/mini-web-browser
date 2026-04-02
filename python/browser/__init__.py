@@ -1,4 +1,5 @@
-from .network import URL, fetch, HTMLParser
+from .network import URL, fetch
+from .parser import HTMLParser
 
 
 def launch_gui(*args, **kwargs):

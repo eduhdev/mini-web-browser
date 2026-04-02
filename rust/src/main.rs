@@ -3,6 +3,7 @@ mod emoji;
 mod graphics;
 mod layout;
 mod network;
+mod parser;
 
 fn main() -> eframe::Result<()> {
     let mut rtl = false;

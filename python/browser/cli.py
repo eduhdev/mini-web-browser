@@ -1,6 +1,7 @@
 import sys
 
-from .network import DEFAULT_FILE, URL, extract_text, HTMLParser
+from .network import DEFAULT_FILE, URL
+from .parser import HTMLParser, extract_text
 
 
 def main():

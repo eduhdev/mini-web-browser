@@ -5,7 +5,8 @@ from .constants import HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
 from .emoji import EmojiCache
 from .fonts import get_font
 from .layout import Layout
-from .network import DEFAULT_FILE, HTMLParser, URL
+from .network import DEFAULT_FILE, URL
+from .parser import HTMLParser
 
 class Browser:
     def __init__(self, rtl=False):

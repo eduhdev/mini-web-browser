@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::constants::{HSTEP, SCROLLBAR_WIDTH, VSTEP};
-use crate::network::{extract_text, Node, Text};
+use crate::parser::{extract_text, Node, Text};
 
 pub type DisplayItem = (f32, f32, String, bool, bool, f32);
 const REGULAR_FAMILY: &str = "browser-regular";

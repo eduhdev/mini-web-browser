@@ -1,6 +1,6 @@
 from .constants import HSTEP, SCROLLBAR_WIDTH, VSTEP
 from .fonts import get_font
-from .network import Text, extract_text
+from .parser import Text, extract_text
 
 
 class Layout:

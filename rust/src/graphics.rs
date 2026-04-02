@@ -7,7 +7,8 @@ use std::sync::{Arc, LazyLock};
 use crate::constants::{EMOJI_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
 use crate::emoji::EmojiCache;
 use crate::layout::{DisplayItem, FontCache, Layout};
-use crate::network::{default_file_url, HtmlParser, Node, Url};
+use crate::network::{default_file_url, Url};
+use crate::parser::{HtmlParser, Node};
 
 static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
