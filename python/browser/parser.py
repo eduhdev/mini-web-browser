@@ -25,6 +25,11 @@ class HTMLParser:
         "link", "meta", "param", "source", "track", "wbr",
     ]
 
+    HEAD_TAGS = [
+        "base", "basefont", "bgsound", "noscript",
+        "link", "meta", "title", "style", "script",
+    ]
+
     def __init__(self, body):
         self.body = body
         self.unfinished = []
@@ -51,6 +56,7 @@ class HTMLParser:
     def add_text(self, text):
         if text.isspace():
             return
+        self.implicit_tags(None)
         parent = self.unfinished[-1]
         node = Text(text, parent)
         parent.children.append(node)
@@ -73,6 +79,7 @@ class HTMLParser:
         tag, attributes = self.get_attributes(tag)
         if tag.startswith("!"):
             return
+        self.implicit_tags(tag)
         if tag.startswith("/"):
             if len(self.unfinished) == 1:
                 return
@@ -87,13 +94,49 @@ class HTMLParser:
             parent = self.unfinished[-1] if self.unfinished else None
             node = Element(tag, attributes, parent)
             self.unfinished.append(node)
+    
+    def implicit_tags(self, tag):
+        while True:
+            open_tags = [node.tag for node in self.unfinished]
+            if open_tags == [] and tag != "html":
+                self.add_tag("html")
+            elif open_tags == ["html"] and tag not in ["head", "body", "/html"]:
+                if tag in self.HEAD_TAGS:
+                    self.add_tag("head")
+                else:
+                    self.add_tag("body")
+            elif open_tags == ["html", "head"] and tag not in ["/head"] + self.HEAD_TAGS:
+                self.add_tag("/head")
+            else:
+                break
 
     def finish(self):
+        if not self.unfinished:
+            self.implicit_tags(None)
         while len(self.unfinished) > 1:
             node = self.unfinished.pop()
             parent = self.unfinished[-1]
             parent.children.append(node)
         return self.unfinished.pop()
+
+
+def print_tree(node):
+    print(tree_to_html(node))
+
+
+def tree_to_html(node):
+    if isinstance(node, Text):
+        return node.text
+
+    attributes = "".join(
+        f' {key}="{value}"' if value else f" {key}"
+        for key, value in node.attributes.items()
+    )
+    if node.tag in HTMLParser.SELF_CLOSING_TAGS:
+        return f"<{node.tag}{attributes}>"
+
+    children = "".join(tree_to_html(child) for child in node.children)
+    return f"<{node.tag}{attributes}>{children}</{node.tag}>"
 
 
 def extract_text(tokens):

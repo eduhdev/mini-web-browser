@@ -113,10 +113,58 @@ pub fn extract_text(node: &Node) -> String {
     text.trim().to_string()
 }
 
+pub fn print_tree(node: &Node) {
+    println!("{}", tree_to_html(node));
+}
+
+fn tree_to_html(node: &Node) -> String {
+    match node {
+        Node::Text(text) => text.text.clone(),
+        Node::Element(element) => {
+            let attributes = element
+                .attributes
+                .iter()
+                .map(|(key, value)| {
+                    if value.is_empty() {
+                        format!(" {key}")
+                    } else {
+                        format!(" {key}=\"{value}\"")
+                    }
+                })
+                .collect::<String>();
+
+            if HtmlParser::SELF_CLOSING_TAGS.contains(&element.tag.as_str()) {
+                format!("<{}{}>", element.tag, attributes)
+            } else {
+                let children = element.children.iter().map(tree_to_html).collect::<String>();
+                if matches!(element.tag.as_str(), "html" | "head" | "body" | "div" | "p") {
+                    format!(
+                        "<{}{}>\n{}\n</{}>",
+                        element.tag, attributes, children, element.tag
+                    )
+                } else {
+                    format!("<{}{}>{}</{}>", element.tag, attributes, children, element.tag)
+                }
+            }
+        }
+    }
+}
+
 impl HtmlParser {
     const SELF_CLOSING_TAGS: [&'static str; 14] = [
         "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
         "source", "track", "wbr",
+    ];
+    const HEAD_TAGS: [&'static str; 9] = [
+        "base",
+        "basefont",
+        "bgsound",
+        "noscript",
+        "link",
+        "meta",
+        "title",
+        "style",
+        "script",
     ];
 
     pub fn new(body: &str) -> Self {
@@ -157,6 +205,7 @@ impl HtmlParser {
         if text.trim().is_empty() {
             return;
         }
+        self.implicit_tags(None);
         let parent = self
             .unfinished
             .last_mut()
@@ -191,6 +240,7 @@ impl HtmlParser {
         if tag.is_empty() || tag.starts_with('!') {
             return;
         }
+        self.implicit_tags(Some(tag.as_str()));
 
         if tag.starts_with('/') {
             if self.unfinished.len() == 1 {
@@ -218,7 +268,36 @@ impl HtmlParser {
         }
     }
 
+    fn implicit_tags(&mut self, tag: Option<&str>) {
+        loop {
+            let open_tags: Vec<&str> = self.unfinished.iter().map(|node| node.tag.as_str()).collect();
+            if open_tags.is_empty() && tag != Some("html") {
+                self.add_tag("html");
+            } else if open_tags == ["html"] && !matches!(tag, Some("head" | "body" | "/html")) {
+                if let Some(tag) = tag {
+                    if Self::HEAD_TAGS.contains(&tag) {
+                        self.add_tag("head");
+                    } else {
+                        self.add_tag("body");
+                    }
+                } else {
+                    self.add_tag("body");
+                }
+            } else if open_tags == ["html", "head"]
+                && !matches!(tag, Some("/head"))
+                && !tag.is_some_and(|tag| Self::HEAD_TAGS.contains(&tag))
+            {
+                self.add_tag("/head");
+            } else {
+                break;
+            }
+        }
+    }
+
     fn finish(&mut self) -> Node {
+        if self.unfinished.is_empty() {
+            self.implicit_tags(None);
+        }
         while self.unfinished.len() > 1 {
             let node = self.unfinished.pop().expect("missing unfinished node");
             let parent = self.unfinished.last_mut().expect("missing parent node");

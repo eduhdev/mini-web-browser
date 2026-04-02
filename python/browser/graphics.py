@@ -6,7 +6,7 @@ from .emoji import EmojiCache
 from .fonts import get_font
 from .layout import Layout
 from .network import DEFAULT_FILE, URL
-from .parser import HTMLParser
+from .parser import HTMLParser, print_tree
 
 class Browser:
     def __init__(self, rtl=False):
@@ -77,6 +77,7 @@ class Browser:
         body = url.request()
         self.body = body
         self.nodes = HTMLParser(body).parse()
+        print_tree(self.nodes)
         self.display_list = Layout(self.nodes, self.width, self.rtl, get_font).display_list
         self.scroll = 0
         self.draw()

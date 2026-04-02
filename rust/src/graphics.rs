@@ -8,7 +8,7 @@ use crate::constants::{EMOJI_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, 
 use crate::emoji::EmojiCache;
 use crate::layout::{DisplayItem, FontCache, Layout};
 use crate::network::{default_file_url, Url};
-use crate::parser::{HtmlParser, Node};
+use crate::parser::{print_tree, HtmlParser, Node};
 
 static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
@@ -97,6 +97,9 @@ impl Browser {
     fn load(&mut self, url: Url) {
         let body = url.request();
         self.nodes = Some(HtmlParser::new(&body).parse());
+        if let Some(nodes) = &self.nodes {
+            print_tree(nodes);
+        }
         self.display_list.clear();
         self.scroll = 0.0;
     }
