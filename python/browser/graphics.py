@@ -8,6 +8,12 @@ from .layout import DocumentLayout
 from .network import DEFAULT_FILE, URL
 from .parser import HTMLParser, print_tree
 
+def paint_tree(layout_object, display_list):
+    display_list.extend(layout_object.paint())
+
+    for child in layout_object.children:
+        paint_tree(child, display_list)
+
 class Browser:
     def __init__(self, rtl=False):
         self.window = tk.Tk()
@@ -80,8 +86,9 @@ class Browser:
         print_tree(self.nodes)
         self.document = DocumentLayout(self.nodes, self.width, self.rtl, get_font)
         self.document.layout()
-        self.display_list = self.document.display_list
         self.scroll = 0
+        self.display_list = []
+        paint_tree(self.document, self.display_list)
         self.draw()
 
     def resize(self, e):
@@ -91,8 +98,9 @@ class Browser:
             return
         self.document = DocumentLayout(self.nodes, self.width, self.rtl, get_font)
         self.document.layout()
-        self.display_list = self.document.display_list
         self.scroll = min(self.scroll, self.max_scroll())
+        self.display_list = []
+        paint_tree(self.document, self.display_list)
         self.draw()
 
     def document_height(self):

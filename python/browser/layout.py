@@ -31,8 +31,10 @@ class DocumentLayout:
         self.x = HSTEP
         self.y = VSTEP
         child.layout()
-        self.display_list = child.display_list
         self.height = child.height
+
+    def paint(self):
+        return []
 
 class BlockLayout:
     def __init__(self, node, parent, previous, width, rtl=False, font_getter=None):
@@ -48,6 +50,9 @@ class BlockLayout:
         self.y = None
         self.width = None
         self.height = None
+    
+    def paint(self):
+        return self.display_list
 
     def layout(self):
         if self.previous:
