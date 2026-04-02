@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use crate::constants::{EMOJI_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
 use crate::emoji::EmojiCache;
-use crate::layout::{DisplayItem, FontCache, Layout};
+use crate::layout::{DisplayItem, DocumentLayout, FontCache};
 use crate::network::{default_file_url, Url};
 use crate::parser::{print_tree, HtmlParser, Node};
 
@@ -108,8 +108,9 @@ impl Browser {
         let Some(nodes) = &self.nodes else {
             return;
         };
-        self.display_list =
-            Layout::new(nodes, self.width, self.rtl, ctx, &mut self.font_cache).display_list;
+        let mut document = DocumentLayout::new(nodes, self.width, self.rtl);
+        document.layout(ctx, &mut self.font_cache);
+        self.display_list = document.display_list;
         self.scroll = self.scroll.min(self.max_scroll());
     }
 

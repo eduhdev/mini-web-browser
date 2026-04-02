@@ -4,7 +4,7 @@ import signal
 from .constants import HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
 from .emoji import EmojiCache
 from .fonts import get_font
-from .layout import Layout
+from .layout import DocumentLayout
 from .network import DEFAULT_FILE, URL
 from .parser import HTMLParser, print_tree
 
@@ -78,7 +78,9 @@ class Browser:
         self.body = body
         self.nodes = HTMLParser(body).parse()
         print_tree(self.nodes)
-        self.display_list = Layout(self.nodes, self.width, self.rtl, get_font).display_list
+        self.document = DocumentLayout(self.nodes, self.width, self.rtl, get_font)
+        self.document.layout()
+        self.display_list = self.document.display_list
         self.scroll = 0
         self.draw()
 
@@ -87,7 +89,9 @@ class Browser:
         self.height = e.height
         if not self.nodes:
             return
-        self.display_list = Layout(self.nodes, self.width, self.rtl, get_font).display_list
+        self.document = DocumentLayout(self.nodes, self.width, self.rtl, get_font)
+        self.document.layout()
+        self.display_list = self.document.display_list
         self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
 
