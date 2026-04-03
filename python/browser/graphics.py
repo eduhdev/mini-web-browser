@@ -39,7 +39,9 @@ class Browser:
         self.window.bind_all("<TouchpadScroll>", self.scrolltouchpad)
     
     def scrolldown(self, e):
-        self.scrollby(SCROLL_STEP)
+        max_y = max(self.document.height + 2*VSTEP - HEIGHT, 0)
+        self.scroll = min(self.scroll + SCROLL_STEP, max_y)
+        self.draw()
 
     def scrolltop(self, e):
         self.scrollby(-SCROLL_STEP)
@@ -67,16 +69,10 @@ class Browser:
         
     def draw(self):
         self.canvas.delete("all")
-        for x, y, token, font in self.display_list:
-            if y > self.scroll + self.height: continue
-            if y + VSTEP < self.scroll: continue
-            emoji = self.emoji_cache.load(token)
-            if emoji is not None:
-                self.canvas.create_image(x, y - self.scroll, image=emoji, anchor="nw")
-            else:
-                self.canvas.create_text(
-                    x, y - self.scroll, text=token, anchor="nw", font=font
-                )
+        for cmd in self.display_list:
+            if cmd.top > self.scroll + HEIGHT: continue
+            if cmd.bottom < self.scroll: continue
+            cmd.execute(self.scroll, self.canvas)
         self.draw_scrollbar()
 
     def load(self, url):
@@ -106,7 +102,7 @@ class Browser:
     def document_height(self):
         if not self.display_list:
             return self.height
-        return self.display_list[-1][1] + VSTEP
+        return self.display_list[-1].bottom + VSTEP
 
     def max_scroll(self):
         return max(self.document_height() - self.height, 0)

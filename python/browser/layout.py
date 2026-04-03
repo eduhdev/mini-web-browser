@@ -1,6 +1,64 @@
 from .constants import HSTEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
+from .emoji import EmojiCache
 from .fonts import get_font
 from .parser import Text, extract_text, Element
+
+
+class DrawText:
+    def __init__(self, x1, y1, text, font):
+        self.top = y1
+        self.left = x1
+        self.text = text
+        self.font = font
+        self.bottom = y1 + font.metrics("linespace")
+
+    def execute(self, scroll, canvas):
+        canvas.create_text(
+            self.left, self.top - scroll,
+            text=self.text,
+            font=self.font,
+            anchor='nw')
+
+
+class DrawEmoji:
+    cache = EmojiCache()
+
+    def __init__(self, x1, y1, text, font):
+        self.top = y1
+        self.left = x1
+        self.text = text
+        self.font = font
+        self.bottom = y1 + font.metrics("linespace")
+
+    def execute(self, scroll, canvas):
+        image = self.cache.load(self.text)
+        if image is None:
+            canvas.create_text(
+                self.left, self.top - scroll,
+                text=self.text,
+                font=self.font,
+                anchor='nw')
+        else:
+            canvas.create_image(
+                self.left, self.top - scroll,
+                image=image,
+                anchor='nw')
+
+
+class DrawRect:
+    def __init__(self, x1, y1, x2, y2, color):
+        self.top = y1
+        self.left = x1
+        self.bottom = y2
+        self.right = x2
+        self.color = color
+
+    def execute(self, scroll, canvas):
+        canvas.create_rectangle(
+            self.left, self.top - scroll,
+            self.right, self.bottom - scroll,
+            width=0,
+            fill=self.color)
 
 BLOCK_ELEMENTS = [
     "html", "body", "article", "section", "nav", "aside",
@@ -52,7 +110,21 @@ class BlockLayout:
         self.height = None
     
     def paint(self):
-        return self.display_list
+        cmds = []
+
+        if isinstance(self.node, Element) and self.node.tag == "pre":
+            x2, y2 = self.x + self.width, self.y + self.height
+            rect = DrawRect(self.x, self.y, x2, y2, "gray")
+            cmds.append(rect)
+        
+        if self.layout_mode() == "inline":
+            for x, y, word, font in self.display_list:
+                if DrawEmoji.cache.load(word) is not None:
+                    cmds.append(DrawEmoji(x, y, word, font))
+                else:
+                    cmds.append(DrawText(x, y, word, font))
+
+        return cmds
 
     def layout(self):
         if self.previous:

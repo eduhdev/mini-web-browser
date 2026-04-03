@@ -87,3 +87,7 @@ fn emoji_path_for(token: &str) -> Option<PathBuf> {
     let path = OPENMOJI_DIR.join(format!("{codepoints}.svg"));
     path.exists().then_some(path)
 }
+
+pub fn has_emoji_asset(token: &str) -> bool {
+    emoji_path_for(token).is_some()
+}

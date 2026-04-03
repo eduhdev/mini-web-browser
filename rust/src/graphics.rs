@@ -4,9 +4,9 @@ use signal_hook::flag;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
-use crate::constants::{EMOJI_SIZE, HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
+use crate::constants::{HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
 use crate::emoji::EmojiCache;
-use crate::layout::{DisplayItem, DocumentLayout, FontCache};
+use crate::layout::{DocumentLayout, DrawCommand, FontCache};
 use crate::network::{default_file_url, Url};
 use crate::parser::{print_tree, HtmlParser, Node};
 
@@ -32,7 +32,7 @@ pub fn run(url: Option<String>, rtl: bool) -> eframe::Result<()> {
 
 struct Browser {
     nodes: Option<Node>,
-    display_list: Vec<DisplayItem>,
+    display_list: Vec<DrawCommand>,
     scroll: f32,
     width: f32,
     height: f32,
@@ -65,30 +65,21 @@ impl Browser {
         let color = ui.visuals().text_color();
         let ctx = ui.ctx().clone();
 
-        for (x, y, token, bold, italic, size) in self.display_list.clone() {
-            if y > self.scroll + self.height {
+        for command in &self.display_list {
+            if command.top() > self.scroll + self.height {
                 continue;
             }
-            if y + VSTEP < self.scroll {
+            if command.bottom() < self.scroll {
                 continue;
             }
-
-            if let Some(texture) = self.emoji_cache.load(&ctx, &token) {
-                let rect = egui::Rect::from_min_size(
-                    egui::pos2(x, y - self.scroll),
-                    egui::vec2(EMOJI_SIZE as f32, EMOJI_SIZE as f32),
-                );
-                painter.image(
-                    texture.id(),
-                    rect,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
-            } else {
-                let galley = self.font_cache.layout_word(&ctx, &token, bold, italic, size);
-                let pos = egui::pos2(x, y - self.scroll);
-                painter.galley(pos, galley, color);
-            }
+            command.execute(
+                self.scroll,
+                painter,
+                &ctx,
+                color,
+                &mut self.emoji_cache,
+                &mut self.font_cache,
+            );
         }
 
         self.draw_scrollbar(painter);
@@ -110,7 +101,8 @@ impl Browser {
         };
         let mut document = DocumentLayout::new(nodes, self.width, self.rtl);
         document.layout(ctx, &mut self.font_cache);
-        self.display_list = document.display_list;
+        self.display_list.clear();
+        paint_tree(Paintable::Document(&document), &mut self.display_list);
         self.scroll = self.scroll.min(self.max_scroll());
     }
 
@@ -125,7 +117,7 @@ impl Browser {
     fn document_height(&self) -> f32 {
         self.display_list
             .last()
-            .map(|(_, y, _, _, _, _)| *y + VSTEP)
+            .map(|command| command.bottom() + VSTEP)
             .unwrap_or(self.height)
     }
 
@@ -260,6 +252,34 @@ fn install_system_font(ctx: &egui::Context) {
     monospace.push("apple-color-emoji".to_owned());
 
     ctx.set_fonts(fonts);
+}
+
+fn paint_tree(layout_object: Paintable<'_>, display_list: &mut Vec<DrawCommand>) {
+    display_list.extend(layout_object.paint());
+    for child in layout_object.children() {
+        paint_tree(child, display_list);
+    }
+}
+
+enum Paintable<'a> {
+    Document(&'a DocumentLayout),
+    Block(&'a crate::layout::BlockLayout),
+}
+
+impl<'a> Paintable<'a> {
+    fn paint(&self) -> Vec<DrawCommand> {
+        match self {
+            Self::Document(layout) => layout.paint(),
+            Self::Block(layout) => layout.paint(),
+        }
+    }
+
+    fn children(&self) -> Vec<Paintable<'a>> {
+        match self {
+            Self::Document(layout) => layout.children.iter().map(Paintable::Block).collect(),
+            Self::Block(layout) => layout.children.iter().map(Paintable::Block).collect(),
+        }
+    }
 }
 
 fn load_font_data(fonts: &mut egui::FontDefinitions, name: &str, path: &str) {

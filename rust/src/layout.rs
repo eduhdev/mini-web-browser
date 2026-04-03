@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::constants::{HEIGHT, HSTEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
+use crate::emoji::has_emoji_asset;
 use crate::parser::{extract_text, Element, Node, Text};
 
 pub type DisplayItem = (f32, f32, String, bool, bool, f32);
@@ -40,18 +41,17 @@ pub struct FontCache {
 
 pub struct DocumentLayout {
     node: Node,
-    children: Vec<BlockLayout>,
+    pub children: Vec<BlockLayout>,
     width: f32,
     rtl: bool,
     x: f32,
     y: f32,
     height: f32,
-    pub display_list: Vec<DisplayItem>,
 }
 
 pub struct BlockLayout {
     node: Node,
-    children: Vec<BlockLayout>,
+    pub children: Vec<BlockLayout>,
     display_list: Vec<DisplayItem>,
     width: f32,
     rtl: bool,
@@ -66,6 +66,40 @@ pub struct BlockLayout {
     line: Vec<(f32, String, bool, bool, f32)>,
 }
 
+pub enum DrawCommand {
+    Text(DrawText),
+    Emoji(DrawEmoji),
+    Rect(DrawRect),
+}
+
+pub struct DrawText {
+    pub top: f32,
+    pub left: f32,
+    pub bottom: f32,
+    text: String,
+    bold: bool,
+    italic: bool,
+    size: f32,
+}
+
+pub struct DrawEmoji {
+    pub top: f32,
+    pub left: f32,
+    pub bottom: f32,
+    text: String,
+    bold: bool,
+    italic: bool,
+    size: f32,
+}
+
+pub struct DrawRect {
+    pub top: f32,
+    pub left: f32,
+    pub bottom: f32,
+    right: f32,
+    color: egui::Color32,
+}
+
 impl DocumentLayout {
     pub fn new(node: &Node, width: f32, rtl: bool) -> Self {
         Self {
@@ -76,7 +110,6 @@ impl DocumentLayout {
             x: 0.0,
             y: 0.0,
             height: 0.0,
-            display_list: Vec::new(),
         }
     }
 
@@ -86,11 +119,14 @@ impl DocumentLayout {
         self.x = HSTEP;
         self.y = VSTEP;
         child.layout(ctx, font_cache, self.x, self.y, self.width, 0.0, None);
-        self.display_list = child.display_list.clone();
         self.height = child.height;
         self.children.clear();
         self.children.push(child);
         let _ = HEIGHT;
+    }
+
+    pub fn paint(&self) -> Vec<DrawCommand> {
+        Vec::new()
     }
 }
 
@@ -296,6 +332,52 @@ impl BlockLayout {
         last_x + font_cache.measure_text(ctx, last_word, *last_bold, *last_italic, *last_size)
             - HSTEP
     }
+
+    pub fn paint(&self) -> Vec<DrawCommand> {
+        let mut commands = Vec::new();
+
+        if matches!(&self.node, Node::Element(Element { tag, .. }) if tag == "pre") {
+            let x2 = self.x + self.width;
+            let y2 = self.y + self.height;
+            commands.push(DrawCommand::Rect(DrawRect {
+                top: self.y,
+                left: self.x,
+                bottom: y2,
+                right: x2,
+                color: egui::Color32::GRAY,
+            }));
+        }
+
+        if self.layout_mode() == "inline" {
+            for (x, y, word, bold, italic, size) in &self.display_list {
+                let top = *y;
+                let bottom = *y + *size * 1.25;
+                if has_emoji_asset(word) {
+                    commands.push(DrawCommand::Emoji(DrawEmoji {
+                        top,
+                        left: *x,
+                        bottom,
+                        text: word.clone(),
+                        bold: *bold,
+                        italic: *italic,
+                        size: *size,
+                    }));
+                } else {
+                    commands.push(DrawCommand::Text(DrawText {
+                        top,
+                        left: *x,
+                        bottom,
+                        text: word.clone(),
+                        bold: *bold,
+                        italic: *italic,
+                        size: *size,
+                    }));
+                }
+            }
+        }
+
+        commands
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -402,4 +484,92 @@ fn font_family_for(bold: bool, italic: bool) -> egui::FontFamily {
         (false, false) => REGULAR_FAMILY,
     };
     egui::FontFamily::Name(Arc::<str>::from(name))
+}
+
+impl DrawCommand {
+    pub fn top(&self) -> f32 {
+        match self {
+            Self::Text(cmd) => cmd.top,
+            Self::Emoji(cmd) => cmd.top,
+            Self::Rect(cmd) => cmd.top,
+        }
+    }
+
+    pub fn bottom(&self) -> f32 {
+        match self {
+            Self::Text(cmd) => cmd.bottom,
+            Self::Emoji(cmd) => cmd.bottom,
+            Self::Rect(cmd) => cmd.bottom,
+        }
+    }
+
+    pub fn execute(
+        &self,
+        scroll: f32,
+        painter: &egui::Painter,
+        ctx: &egui::Context,
+        color: egui::Color32,
+        emoji_cache: &mut crate::emoji::EmojiCache,
+        font_cache: &mut FontCache,
+    ) {
+        match self {
+            Self::Text(cmd) => cmd.execute(scroll, painter, ctx, color, font_cache),
+            Self::Emoji(cmd) => cmd.execute(scroll, painter, ctx, color, emoji_cache, font_cache),
+            Self::Rect(cmd) => cmd.execute(scroll, painter),
+        }
+    }
+}
+
+impl DrawText {
+    fn execute(
+        &self,
+        scroll: f32,
+        painter: &egui::Painter,
+        ctx: &egui::Context,
+        color: egui::Color32,
+        font_cache: &mut FontCache,
+    ) {
+        let galley = font_cache.layout_word(ctx, &self.text, self.bold, self.italic, self.size);
+        let pos = egui::pos2(self.left, self.top - scroll);
+        painter.galley(pos, galley, color);
+    }
+}
+
+impl DrawEmoji {
+    fn execute(
+        &self,
+        scroll: f32,
+        painter: &egui::Painter,
+        ctx: &egui::Context,
+        color: egui::Color32,
+        emoji_cache: &mut crate::emoji::EmojiCache,
+        font_cache: &mut FontCache,
+    ) {
+        if let Some(texture) = emoji_cache.load(ctx, &self.text) {
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(self.left, self.top - scroll),
+                egui::vec2(crate::constants::EMOJI_SIZE as f32, crate::constants::EMOJI_SIZE as f32),
+            );
+            painter.image(
+                texture.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        } else {
+            let galley = font_cache.layout_word(ctx, &self.text, self.bold, self.italic, self.size);
+            let pos = egui::pos2(self.left, self.top - scroll);
+            painter.galley(pos, galley, color);
+        }
+    }
+}
+
+impl DrawRect {
+    fn execute(&self, scroll: f32, painter: &egui::Painter) {
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(self.left, self.top - scroll),
+            egui::pos2(self.right, self.bottom - scroll),
+        );
+        painter.rect_filled(rect, 0.0, self.color);
+    }
 }
