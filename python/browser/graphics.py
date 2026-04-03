@@ -2,6 +2,7 @@ import tkinter as tk
 import argparse
 import signal
 from .constants import HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
+from .css import style
 from .emoji import EmojiCache
 from .fonts import get_font
 from .layout import DocumentLayout
@@ -79,6 +80,7 @@ class Browser:
         body = url.request()
         self.body = body
         self.nodes = HTMLParser(body).parse()
+        style(self.nodes)
         print_tree(self.nodes)
         self.document = DocumentLayout(self.nodes, self.width, self.rtl, get_font)
         self.document.layout()
