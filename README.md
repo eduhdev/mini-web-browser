@@ -17,16 +17,18 @@ The book primarily builds the browser in Python, and this repository follows tha
 - `rust/`
   Rust implementation
 
-Inside each implementation, the code is split into separate network, layout, graphics, and emoji/font helpers so rendering work can evolve independently from fetching and parsing.
+Inside each implementation, the code is split into separate loading, parsing, layout, painting, and graphics responsibilities.
 
 Current Python modules:
 
 - `python/browser/network.py`
-  URL handling, HTTP/file/data/about loading, redirects, caching, compression, and HTML token extraction
+  URL handling, HTTP/file/data/about loading, redirects, caching, compression, and response decoding
+- `python/browser/parser.py`
+  HTML tree construction, implicit tag insertion, debug serialization, and visible-text extraction
 - `python/browser/layout.py`
-  text layout and tag-driven styling
+  document/block layout objects plus paint command generation
 - `python/browser/graphics.py`
-  Tk window, drawing, scrolling, resizing, and input handling
+  Tk window, paint tree traversal, drawing, scrolling, resizing, and input handling
 - `python/browser/fonts.py`
   shared font caching
 - `python/browser/emoji.py`
@@ -35,16 +37,23 @@ Current Python modules:
 Current Rust modules:
 
 - `rust/src/network.rs`
+  URL handling, HTTP/file/data/about loading, redirects, caching, compression, and response decoding
+- `rust/src/parser.rs`
+  HTML tree construction, implicit tag insertion, debug serialization, and visible-text extraction
 - `rust/src/layout.rs`
+  document/block layout objects, font measurement, and paint command generation
 - `rust/src/graphics.rs`
+  egui window, paint tree traversal, drawing, scrolling, resizing, and input handling
 - `rust/src/emoji.rs`
+  emoji asset loading from the root `openmoji/` folder
 - `rust/src/constants.rs`
+  shared UI/layout constants
 
 ## Current Status
 
-The project currently contains a small browser prototype in both languages, with a text-mode CLI and a graphical text renderer.
+The project currently contains a small browser prototype, with a text-mode CLI and a graphical text renderer built on top of an HTML tree and a layout tree.
 
-Implemented so far in the network layer:
+Implemented so far in the loading layer:
 
 - `http`, `https`, `file`, `data`, `view-source`, and `about:blank` URL support
 - HTTP/1.1 requests with reusable request headers
@@ -54,12 +63,21 @@ Implemented so far in the network layer:
 - basic response caching with `Cache-Control: no-store` and `max-age`
 - gzip-compressed response support
 - chunked transfer decoding
-- HTML lexing into text/tag tokens
+
+Implemented so far in the parser/document layer:
+
+- HTML parsing into `Element` and `Text` nodes
+- implicit `html`, `head`, and `body` insertion
+- self-closing tag handling
+- visible-text extraction from the parsed tree
 - support for `&lt;` and `&gt;` entities
+- debug printing of the reconstructed HTML tree
 
-Implemented so far in the graphics/layout layer:
+Implemented so far in the layout/paint layer:
 
+- document-level and block-level layout objects
 - word-based layout with measured text widths
+- block vs inline layout mode selection
 - scrolling, resizing, and a proportional scrollbar
 - basic tag handling for:
   - `<b>`
@@ -67,13 +85,14 @@ Implemented so far in the graphics/layout layer:
   - `<small>`
   - `<big>`
   - `<br>`
-  - `</div>`
-  - `</p>`
+  - `<div>`
+  - `<p>`
 - optional `--rtl` layout mode
+- paint-command based rendering (`DrawText`, `DrawEmoji`, `DrawRect`)
 - emoji rendering from the root `openmoji/` folder
-- font caching on Python and cached styled text layouts on Rust
+- shared font/style caching
 
-This is still intentionally minimal. It does not yet implement full HTML parsing, layout, CSS, or JavaScript.
+This is still intentionally minimal. It does not yet implement full browser-grade HTML parsing, CSS, or JavaScript.
 
 ## Run
 
