@@ -17,7 +17,7 @@ The book primarily builds the browser in Python, and this repository follows tha
 - `rust/`
   Rust implementation
 
-Inside each implementation, the code is split into separate loading, parsing, layout, painting, and graphics responsibilities.
+Inside each implementation, the code is split into separate loading, parsing, styling, layout, painting, and graphics responsibilities.
 
 Current Python modules:
 
@@ -25,14 +25,18 @@ Current Python modules:
   URL handling, HTTP/file/data/about loading, redirects, caching, compression, and response decoding
 - `python/browser/parser.py`
   HTML tree construction, implicit tag insertion, debug serialization, and visible-text extraction
+- `python/browser/css.py`
+  CSS parsing, selector matching, cascade priority, inheritance, and inline style handling
 - `python/browser/layout.py`
-  document/block layout objects plus paint command generation
+  document/block layout objects plus CSS-driven paint command generation
 - `python/browser/graphics.py`
-  Tk window, paint tree traversal, drawing, scrolling, resizing, and input handling
+  Tk window, stylesheet loading, paint tree traversal, drawing, scrolling, resizing, and input handling
 - `python/browser/fonts.py`
   shared font caching
 - `python/browser/emoji.py`
   emoji asset loading from the root `openmoji/` folder
+- `browser.css`
+  default browser stylesheet shared by both implementations
 
 Current Rust modules:
 
@@ -40,10 +44,12 @@ Current Rust modules:
   URL handling, HTTP/file/data/about loading, redirects, caching, compression, and response decoding
 - `rust/src/parser.rs`
   HTML tree construction, implicit tag insertion, debug serialization, and visible-text extraction
+- `rust/src/css.rs`
+  CSS parsing, selector matching, cascade priority, inheritance, and inline style handling
 - `rust/src/layout.rs`
-  document/block layout objects, font measurement, and paint command generation
+  document/block layout objects, font measurement, and CSS-driven paint command generation
 - `rust/src/graphics.rs`
-  egui window, paint tree traversal, drawing, scrolling, resizing, and input handling
+  egui window, stylesheet loading, paint tree traversal, drawing, scrolling, resizing, and input handling
 - `rust/src/emoji.rs`
   emoji asset loading from the root `openmoji/` folder
 - `rust/src/constants.rs`
@@ -73,26 +79,35 @@ Implemented so far in the parser/document layer:
 - support for `&lt;` and `&gt;` entities
 - debug printing of the reconstructed HTML tree
 
+Implemented so far in the styling layer:
+
+- default browser stylesheet loaded from `browser.css`
+- inline `style` attribute parsing
+- external stylesheet loading through `<link rel="stylesheet" href="...">`
+- relative stylesheet URL resolution
+- tag selectors and descendant selectors
+- cascade sorting by selector priority
+- inherited properties for:
+  - `font-size`
+  - `font-style`
+  - `font-weight`
+  - `color`
+- percentage font-size resolution
+- CSS-driven text color, font size, font style, font weight, and background color
+
 Implemented so far in the layout/paint layer:
 
 - document-level and block-level layout objects
 - word-based layout with measured text widths
 - block vs inline layout mode selection
 - scrolling, resizing, and a proportional scrollbar
-- basic tag handling for:
-  - `<b>`
-  - `<i>`
-  - `<small>`
-  - `<big>`
-  - `<br>`
-  - `<div>`
-  - `<p>`
+- line breaks for `<br>` and paragraph/block boundaries
 - optional `--rtl` layout mode
 - paint-command based rendering (`DrawText`, `DrawEmoji`, `DrawRect`)
 - emoji rendering from the root `openmoji/` folder
 - shared font/style caching
 
-This is still intentionally minimal. It does not yet implement full browser-grade HTML parsing, CSS, or JavaScript.
+This is still intentionally minimal. It does not yet implement full browser-grade HTML parsing, complete CSS, or JavaScript.
 
 ## Run
 
