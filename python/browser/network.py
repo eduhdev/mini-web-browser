@@ -178,14 +178,28 @@ class URL:
 
         return self.handle_response(status, response_headers, content, redirects)
 
-    def resolve(self, location):
-        if location.startswith("//"):
-            return "{}:{}".format(self.scheme, location)
-        if location.startswith("/"):
-            return "{}://{}{}".format(self.scheme, self.authority(), location)
-        if ":" in location.split("/", 1)[0]:
-            return location
-        raise AssertionError("unsupported redirect location")
+    def resolve(self, url):
+        if "://" in url: return URL(url)
+        if not url.startswith("/"):
+            dir, _ = self.path.rsplit("/", 1)
+            while url.startswith("../"):
+                _, url = url.split("/", 1)
+                if "/" in dir:
+                    dir, _ = dir.rsplit("/", 1)
+            url = dir + "/" + url
+        if url.startswith("//"):
+            return URL(self.scheme + ":" + url)
+        else:
+            return URL(self.scheme + "://" + self.host + \
+                       ":" + str(self.port) + url)
+
+        if url.startswith("//"):
+            return "{}:{}".format(self.scheme, url)
+        if url.startswith("/"):
+            return "{}://{}{}".format(self.scheme, self.authority(), url)
+        if ":" in url.split("/", 1)[0]:
+            return url
+        raise AssertionError("unsupported redirect url")
 
     def authority(self):
         default_port = 80 if self.scheme == "http" else 443

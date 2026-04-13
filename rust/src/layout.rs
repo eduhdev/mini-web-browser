@@ -7,7 +7,7 @@ use crate::constants::{HEIGHT, HSTEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
 use crate::emoji::has_emoji_asset;
 use crate::parser::{extract_text, Element, Node, Text};
 
-pub type DisplayItem = (f32, f32, String, bool, bool, f32);
+pub type DisplayItem = (f32, f32, String, bool, bool, f32, String);
 const REGULAR_FAMILY: &str = "browser-regular";
 const BOLD_FAMILY: &str = "browser-bold";
 const ITALIC_FAMILY: &str = "browser-italic";
@@ -60,10 +60,7 @@ pub struct BlockLayout {
     height: f32,
     cursor_x: f32,
     cursor_y: f32,
-    weight: &'static str,
-    style: &'static str,
-    size: f32,
-    line: Vec<(f32, String, bool, bool, f32)>,
+    line: Vec<(f32, String, bool, bool, f32, String)>,
 }
 
 pub enum DrawCommand {
@@ -80,6 +77,7 @@ pub struct DrawText {
     bold: bool,
     italic: bool,
     size: f32,
+    color: String,
 }
 
 pub struct DrawEmoji {
@@ -90,6 +88,7 @@ pub struct DrawEmoji {
     bold: bool,
     italic: bool,
     size: f32,
+    color: String,
 }
 
 pub struct DrawRect {
@@ -143,9 +142,6 @@ impl BlockLayout {
             height: 0.0,
             cursor_x: 0.0,
             cursor_y: 0.0,
-            weight: "normal",
-            style: "roman",
-            size: BASE_FONT_SIZE,
             line: Vec::new(),
         }
     }
@@ -189,12 +185,10 @@ impl BlockLayout {
         } else {
             self.cursor_x = 0.0;
             self.cursor_y = 0.0;
-            self.weight = "normal";
-            self.style = "roman";
-            self.size = BASE_FONT_SIZE;
             self.line.clear();
             let node = self.node.clone();
-            self.recurse(&node, ctx, font_cache);
+            let initial_style = node_style(&node).clone();
+            self.recurse(&node, &initial_style, ctx, font_cache);
             self.flush(ctx, font_cache);
             self.height = self.cursor_y;
         }
@@ -222,22 +216,8 @@ impl BlockLayout {
         }
     }
 
-    fn open_tag(&mut self, tag: &str) {
-        match tag {
-            "i" => self.style = "italic",
-            "b" => self.weight = "bold",
-            "small" => self.size -= 2.0,
-            "big" => self.size += 4.0,
-            _ => {}
-        }
-    }
-
     fn close_tag(&mut self, tag: &str, ctx: &egui::Context, font_cache: &mut FontCache) {
         match tag {
-            "i" => self.style = "roman",
-            "b" => self.weight = "normal",
-            "small" => self.size += 2.0,
-            "big" => self.size -= 4.0,
             "div" => self.newline(ctx, font_cache),
             "p" => {
                 self.newline(ctx, font_cache);
@@ -247,11 +227,17 @@ impl BlockLayout {
         }
     }
 
-    fn recurse(&mut self, tree: &Node, ctx: &egui::Context, font_cache: &mut FontCache) {
+    fn recurse(
+        &mut self,
+        tree: &Node,
+        inherited_style: &HashMap<String, String>,
+        ctx: &egui::Context,
+        font_cache: &mut FontCache,
+    ) {
         match tree {
             Node::Text(Text { .. }) => {
                 for word in extract_text(tree).split_whitespace() {
-                    self.word(word, ctx, font_cache);
+                    self.word(inherited_style, &word, ctx, font_cache);
                 }
             }
             Node::Element(element) => {
@@ -260,27 +246,46 @@ impl BlockLayout {
                     self.newline(ctx, font_cache);
                     return;
                 }
-                self.open_tag(&element.tag);
+                let current_style = node_style(tree);
                 for child in &element.children {
-                    self.recurse(child, ctx, font_cache);
+                    self.recurse(child, current_style, ctx, font_cache);
                 }
                 self.close_tag(&element.tag, ctx, font_cache);
             }
         }
     }
 
-    fn word(&mut self, word: &str, ctx: &egui::Context, font_cache: &mut FontCache) {
-        let bold = self.weight == "bold";
-        let italic = self.style == "italic";
-        let w = font_cache.measure_text(ctx, word, bold, italic, self.size);
+    fn word(
+        &mut self,
+        style: &HashMap<String, String>,
+        word: &str,
+        ctx: &egui::Context,
+        font_cache: &mut FontCache,
+    ) {
+        let color = style
+            .get("color")
+            .cloned()
+            .unwrap_or_else(|| "black".to_string());
+        let bold = style
+            .get("font-weight")
+            .is_some_and(|weight| weight == "bold");
+        let italic = style
+            .get("font-style")
+            .is_some_and(|style| style == "italic");
+        let size = style
+            .get("font-size")
+            .and_then(|size| size.strip_suffix("px"))
+            .and_then(|size| size.parse::<f32>().ok())
+            .unwrap_or(BASE_FONT_SIZE);
+        let w = font_cache.measure_text(ctx, word, bold, italic, size);
 
         if self.cursor_x + w > self.width - SCROLLBAR_WIDTH {
             self.flush(ctx, font_cache);
         }
 
         self.line
-            .push((self.cursor_x, word.to_string(), bold, italic, self.size));
-        self.cursor_x += font_cache.measure_text(ctx, &format!("{word} "), bold, italic, self.size);
+            .push((self.cursor_x, word.to_string(), bold, italic, size, color));
+        self.cursor_x += font_cache.measure_text(ctx, &format!("{word} "), bold, italic, size);
     }
 
     fn newline(&mut self, ctx: &egui::Context, font_cache: &mut FontCache) {
@@ -295,7 +300,7 @@ impl BlockLayout {
         let metrics: Vec<FontMetrics> = self
             .line
             .iter()
-            .map(|(_, _, bold, italic, size)| {
+            .map(|(_, _, bold, italic, size, _)| {
                 font_cache.measure_metrics(ctx, *bold, *italic, *size)
             })
             .collect();
@@ -311,11 +316,11 @@ impl BlockLayout {
             0.0
         };
 
-        for (rel_x, word, bold, italic, size) in &self.line {
+        for (rel_x, word, bold, italic, size, color) in &self.line {
             let x = self.x + rel_x + shift;
             let y = self.y + baseline - font_cache.measure_metrics(ctx, *bold, *italic, *size).ascent;
             self.display_list
-                .push((x, y, word.clone(), *bold, *italic, *size));
+                .push((x, y, word.clone(), *bold, *italic, *size, color.clone()));
         }
 
         let max_descent = metrics
@@ -328,7 +333,7 @@ impl BlockLayout {
     }
 
     fn measure_line(&self, ctx: &egui::Context, font_cache: &mut FontCache) -> f32 {
-        let (last_x, last_word, last_bold, last_italic, last_size) = self.line.last().unwrap();
+        let (last_x, last_word, last_bold, last_italic, last_size, _) = self.line.last().unwrap();
         last_x + font_cache.measure_text(ctx, last_word, *last_bold, *last_italic, *last_size)
             - HSTEP
     }
@@ -336,7 +341,11 @@ impl BlockLayout {
     pub fn paint(&self) -> Vec<DrawCommand> {
         let mut commands = Vec::new();
 
-        if matches!(&self.node, Node::Element(Element { tag, .. }) if tag == "pre") {
+        let bgcolor = node_style(&self.node)
+            .get("background-color")
+            .cloned()
+            .unwrap_or_else(|| "transparent".to_string());
+        if bgcolor != "transparent" {
             let x2 = self.x + self.width;
             let y2 = self.y + self.height;
             commands.push(DrawCommand::Rect(DrawRect {
@@ -344,12 +353,12 @@ impl BlockLayout {
                 left: self.x,
                 bottom: y2,
                 right: x2,
-                color: egui::Color32::GRAY,
+                color: parse_color(&bgcolor),
             }));
         }
 
         if self.layout_mode() == "inline" {
-            for (x, y, word, bold, italic, size) in &self.display_list {
+            for (x, y, word, bold, italic, size, color) in &self.display_list {
                 let top = *y;
                 let bottom = *y + *size * 1.25;
                 if has_emoji_asset(word) {
@@ -361,6 +370,7 @@ impl BlockLayout {
                         bold: *bold,
                         italic: *italic,
                         size: *size,
+                        color: color.clone(),
                     }));
                 } else {
                     commands.push(DrawCommand::Text(DrawText {
@@ -371,6 +381,7 @@ impl BlockLayout {
                         bold: *bold,
                         italic: *italic,
                         size: *size,
+                        color: color.clone(),
                     }));
                 }
             }
@@ -526,12 +537,12 @@ impl DrawText {
         scroll: f32,
         painter: &egui::Painter,
         ctx: &egui::Context,
-        color: egui::Color32,
+        _color: egui::Color32,
         font_cache: &mut FontCache,
     ) {
         let galley = font_cache.layout_word(ctx, &self.text, self.bold, self.italic, self.size);
         let pos = egui::pos2(self.left, self.top - scroll);
-        painter.galley(pos, galley, color);
+        painter.galley(pos, galley, parse_color(&self.color));
     }
 }
 
@@ -541,7 +552,7 @@ impl DrawEmoji {
         scroll: f32,
         painter: &egui::Painter,
         ctx: &egui::Context,
-        color: egui::Color32,
+        _color: egui::Color32,
         emoji_cache: &mut crate::emoji::EmojiCache,
         font_cache: &mut FontCache,
     ) {
@@ -559,7 +570,7 @@ impl DrawEmoji {
         } else {
             let galley = font_cache.layout_word(ctx, &self.text, self.bold, self.italic, self.size);
             let pos = egui::pos2(self.left, self.top - scroll);
-            painter.galley(pos, galley, color);
+            painter.galley(pos, galley, parse_color(&self.color));
         }
     }
 }
@@ -571,5 +582,40 @@ impl DrawRect {
             egui::pos2(self.right, self.bottom - scroll),
         );
         painter.rect_filled(rect, 0.0, self.color);
+    }
+}
+
+fn node_style(node: &Node) -> &HashMap<String, String> {
+    match node {
+        Node::Text(text) => &text.style,
+        Node::Element(element) => &element.style,
+    }
+}
+
+fn parse_color(color: &str) -> egui::Color32 {
+    match color {
+        "black" => egui::Color32::BLACK,
+        "white" => egui::Color32::WHITE,
+        "blue" => egui::Color32::BLUE,
+        "red" => egui::Color32::RED,
+        "green" => egui::Color32::GREEN,
+        "gray" | "grey" => egui::Color32::GRAY,
+        "lightblue" => egui::Color32::from_rgb(173, 216, 230),
+        _ if color.starts_with('#') && color.len() == 4 => {
+            let red = &color[1..2];
+            let green = &color[2..3];
+            let blue = &color[3..4];
+            let red = u8::from_str_radix(&format!("{red}{red}"), 16).unwrap_or(0);
+            let green = u8::from_str_radix(&format!("{green}{green}"), 16).unwrap_or(0);
+            let blue = u8::from_str_radix(&format!("{blue}{blue}"), 16).unwrap_or(0);
+            egui::Color32::from_rgb(red, green, blue)
+        }
+        _ if color.starts_with('#') && color.len() == 7 => {
+            let red = u8::from_str_radix(&color[1..3], 16).unwrap_or(0);
+            let green = u8::from_str_radix(&color[3..5], 16).unwrap_or(0);
+            let blue = u8::from_str_radix(&color[5..7], 16).unwrap_or(0);
+            egui::Color32::from_rgb(red, green, blue)
+        }
+        _ => egui::Color32::BLACK,
     }
 }

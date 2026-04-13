@@ -4,6 +4,7 @@ use std::collections::HashMap;
 pub struct Text {
     pub text: String,
     pub children: Vec<Node>,
+    pub style: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -11,6 +12,7 @@ pub struct Element {
     pub tag: String,
     pub attributes: HashMap<String, String>,
     pub children: Vec<Node>,
+    pub style: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -213,6 +215,7 @@ impl HtmlParser {
         parent.children.push(Node::Text(Text {
             text: text.to_owned(),
             children: Vec::new(),
+            style: HashMap::new(),
         }));
     }
 
@@ -258,12 +261,14 @@ impl HtmlParser {
                 tag,
                 attributes,
                 children: Vec::new(),
+                style: HashMap::new(),
             }));
         } else {
             self.unfinished.push(Element {
                 tag,
                 attributes,
                 children: Vec::new(),
+                style: HashMap::new(),
             });
         }
     }

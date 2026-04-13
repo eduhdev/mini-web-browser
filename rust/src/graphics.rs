@@ -5,10 +5,11 @@ use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use crate::constants::{HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH};
+use crate::css::{cascade_priority, style, CssParser};
 use crate::emoji::EmojiCache;
 use crate::layout::{DocumentLayout, DrawCommand, FontCache};
 use crate::network::{default_file_url, Url};
-use crate::parser::{print_tree, HtmlParser, Node};
+use crate::parser::{print_tree, Element, HtmlParser, Node};
 
 static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
@@ -87,10 +88,33 @@ impl Browser {
 
     fn load(&mut self, url: Url) {
         let body = url.request();
-        self.nodes = Some(HtmlParser::new(&body).parse());
-        if let Some(nodes) = &self.nodes {
-            print_tree(nodes);
+        let mut nodes = HtmlParser::new(&body).parse();
+        let mut rules = default_style_sheet();
+        let links = tree_to_list(&nodes)
+            .into_iter()
+            .filter_map(|node| match node {
+                Node::Element(Element {
+                    tag,
+                    attributes,
+                    ..
+                }) if tag == "link"
+                    && attributes.get("rel").is_some_and(|rel| rel == "stylesheet")
+                    && attributes.contains_key("href") =>
+                {
+                    attributes.get("href").cloned()
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for link in links {
+            let style_url = url.resolve(&link);
+            let body = style_url.request();
+            rules.extend(CssParser::new(&body).parse());
         }
+        rules.sort_by_key(cascade_priority);
+        style(&mut nodes, &rules);
+        print_tree(&nodes);
+        self.nodes = Some(nodes);
         self.display_list.clear();
         self.scroll = 0.0;
     }
@@ -252,6 +276,28 @@ fn install_system_font(ctx: &egui::Context) {
     monospace.push("apple-color-emoji".to_owned());
 
     ctx.set_fonts(fonts);
+}
+
+fn default_style_sheet() -> Vec<crate::css::Rule> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("browser.css");
+    let css = std::fs::read_to_string(path).unwrap_or_default();
+    CssParser::new(&css).parse()
+}
+
+fn tree_to_list(tree: &Node) -> Vec<Node> {
+    let mut nodes = vec![tree.clone()];
+    match tree {
+        Node::Text(_) => {}
+        Node::Element(element) => {
+            for child in &element.children {
+                nodes.extend(tree_to_list(child));
+            }
+        }
+    }
+    nodes
 }
 
 fn paint_tree(layout_object: Paintable<'_>, display_list: &mut Vec<DrawCommand>) {

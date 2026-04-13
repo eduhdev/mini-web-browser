@@ -1,19 +1,32 @@
 import tkinter as tk
 import argparse
 import signal
+from pathlib import Path
 from .constants import HEIGHT, SCROLL_STEP, SCROLLBAR_WIDTH, VSTEP, WIDTH
-from .css import style
+from .css import style, CSSParser, cascade_priority
 from .emoji import EmojiCache
 from .fonts import get_font
 from .layout import DocumentLayout
 from .network import DEFAULT_FILE, URL
-from .parser import HTMLParser, print_tree
+from .parser import Element, HTMLParser, print_tree
+
+DEFAULT_STYLE_SHEET = CSSParser(
+    (Path(__file__).resolve().parents[2] / "browser.css").read_text()
+).parse()
 
 def paint_tree(layout_object, display_list):
     display_list.extend(layout_object.paint())
 
     for child in layout_object.children:
         paint_tree(child, display_list)
+
+def tree_to_list(tree, list):
+    list.append(tree)
+    for child in tree.children:
+        tree_to_list(child, list)
+    return list
+
+
 
 class Browser:
     def __init__(self, rtl=False):
@@ -28,7 +41,8 @@ class Browser:
             self.window,
             width=WIDTH,
             height=HEIGHT,
-            highlightthickness=0
+            highlightthickness=0,
+            bg="white"
         )
         self.canvas.pack(fill="both", expand=True)
         self.scroll = 0
@@ -80,7 +94,21 @@ class Browser:
         body = url.request()
         self.body = body
         self.nodes = HTMLParser(body).parse()
-        style(self.nodes)
+        rules = DEFAULT_STYLE_SHEET.copy()
+        links = [node.attributes["href"]
+            for node in tree_to_list(self.nodes, [])
+            if isinstance(node, Element)
+            and node.tag == "link"
+            and node.attributes.get("rel") == "stylesheet"
+            and "href" in node.attributes]
+        for link in links:
+            style_url = url.resolve(link)
+            try:
+                body = style_url.request()
+            except:
+                continue
+            rules.extend(CSSParser(body).parse())
+        style(self.nodes, sorted(rules, key=cascade_priority))
         print_tree(self.nodes)
         self.document = DocumentLayout(self.nodes, self.width, self.rtl, get_font)
         self.document.layout()

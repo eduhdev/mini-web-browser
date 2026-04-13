@@ -5,30 +5,33 @@ from .parser import Text, extract_text, Element
 
 
 class DrawText:
-    def __init__(self, x1, y1, text, font):
+    def __init__(self, x1, y1, text, font, color):
         self.top = y1
         self.left = x1
         self.text = text
         self.font = font
         self.bottom = y1 + font.metrics("linespace")
+        self.color = color
 
     def execute(self, scroll, canvas):
         canvas.create_text(
             self.left, self.top - scroll,
             text=self.text,
             font=self.font,
-            anchor='nw')
+            anchor='nw',
+            fill=self.color)
 
 
 class DrawEmoji:
     cache = EmojiCache()
 
-    def __init__(self, x1, y1, text, font):
+    def __init__(self, x1, y1, text, font, color):
         self.top = y1
         self.left = x1
         self.text = text
         self.font = font
         self.bottom = y1 + font.metrics("linespace")
+        self.color = color
 
     def execute(self, scroll, canvas):
         image = self.cache.load(self.text)
@@ -37,7 +40,8 @@ class DrawEmoji:
                 self.left, self.top - scroll,
                 text=self.text,
                 font=self.font,
-                anchor='nw')
+                anchor='nw',
+                fill=self.color)
         else:
             canvas.create_image(
                 self.left, self.top - scroll,
@@ -119,11 +123,11 @@ class BlockLayout:
             cmds.append(rect)
         
         if self.layout_mode() == "inline":
-            for x, y, word, font in self.display_list:
+            for x, y, word, font, color in self.display_list:
                 if DrawEmoji.cache.load(word) is not None:
-                    cmds.append(DrawEmoji(x, y, word, font))
+                    cmds.append(DrawEmoji(x, y, word, font, color))
                 else:
-                    cmds.append(DrawText(x, y, word, font))
+                    cmds.append(DrawText(x, y, word, font, color))
 
         return cmds
 
@@ -202,26 +206,29 @@ class BlockLayout:
             self.newline()
             self.cursor_y += VSTEP
 
-    def recurse(self, tree):
-        if isinstance(tree, Text):
-            for word in extract_text([tree]).split():
-                self.word(word)
-        elif tree.tag.strip().casefold() in ["br", "br/", "/div"]:
-            self.newline()
+    def recurse(self, node):
+        if isinstance(node, Text):
+            for word in extract_text([node]).split():
+                self.word(node, word)
         else:
-            self.open_tag(tree.tag)
-            for child in tree.children:
+            if node.tag == "br":
+                self.flush()
+            for child in node.children:
                 self.recurse(child)
-            self.close_tag(tree.tag)
 
-    def word(self, word):
-        font = self.get_font(self.size, self.weight, self.style)
+    def word(self, node, word):
+        color = node.style["color"]
+        weight = node.style["font-weight"]
+        style = node.style["font-style"]
+        if style == "normal": style = "roman"
+        size = int(float(node.style["font-size"][:-2]) * .75)
+        font = get_font(size, weight, style)
         w = font.measure(word)
 
         if self.cursor_x + w > self.width - SCROLLBAR_WIDTH:
             self.flush()
 
-        self.line.append((self.cursor_x, word, font))
+        self.line.append((self.cursor_x, word, font, color))
         self.cursor_x += font.measure(word + " ")
 
     def newline(self):
@@ -231,7 +238,7 @@ class BlockLayout:
         if not self.line:
             return
 
-        metrics = [font.metrics() for x, word, font in self.line]
+        metrics = [font.metrics() for x, word, font, color in self.line]
         max_ascent = max([metric["ascent"] for metric in metrics])
         baseline = self.cursor_y + 1.25 * max_ascent
         line_width = self.measure_line()
@@ -240,10 +247,10 @@ class BlockLayout:
         else:
             shift = 0
 
-        for rel_x, word, font in self.line:
+        for rel_x, word, font, color in self.line:
             x = self.x + rel_x + shift
             y = self.y + baseline - font.metrics("ascent")
-            self.display_list.append((x, y, word, font))
+            self.display_list.append((x, y, word, font, color))
 
         max_descent = max([metric["descent"] for metric in metrics])
         self.cursor_y = baseline + 1.25 * max_descent
@@ -251,5 +258,5 @@ class BlockLayout:
         self.line = []
 
     def measure_line(self):
-        last_x, last_word, last_font = self.line[-1]
+        last_x, last_word, last_font, _ = self.line[-1]
         return last_x + last_font.measure(last_word) - HSTEP

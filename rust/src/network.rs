@@ -257,15 +257,40 @@ impl Url {
         self.handle_response(status, &response_headers, body, redirects)
     }
 
-    fn resolve(&self, location: &str) -> String {
-        if location.starts_with("//") {
-            format!("{}:{}", self.scheme, location)
-        } else if location.starts_with('/') {
-            format!("{}://{}{}", self.scheme, self.authority(), location)
-        } else if location.split('/').next().unwrap_or("").contains(':') {
-            location.to_string()
+    pub fn resolve(&self, url: &str) -> Url {
+        if url.contains("://") {
+            return Url::new(url);
+        }
+
+        let mut url = url.to_owned();
+        if !url.starts_with('/') {
+            let mut dir = self
+                .path
+                .rsplit_once('/')
+                .map(|(dir, _)| dir.to_owned())
+                .unwrap_or_default();
+            while url.starts_with("../") {
+                url = url
+                    .split_once('/')
+                    .map(|(_, rest)| rest.to_owned())
+                    .unwrap_or_default();
+                if let Some((parent, _)) = dir.rsplit_once('/') {
+                    dir = parent.to_owned();
+                }
+            }
+            url = format!("{dir}/{url}");
+        }
+
+        if url.starts_with("//") {
+            Url::new(&format!("{}:{}", self.scheme, url))
         } else {
-            "about:blank".to_string()
+            Url::new(&format!(
+                "{}://{}:{}{}",
+                self.scheme,
+                self.host_without_port(),
+                self.port(),
+                url
+            ))
         }
     }
 
@@ -317,7 +342,7 @@ impl Url {
                 .get("location")
                 .expect("redirect response missing location");
             assert!(redirects < MAX_REDIRECTS, "too many redirects");
-            Url::new(&self.resolve(location)).request_with_redirects(redirects + 1)
+            self.resolve(location).request_with_redirects(redirects + 1)
         } else {
             body
         }
